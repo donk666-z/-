@@ -17,8 +17,8 @@ yarn.lock
 *.sln
 *.sw?
 .codex-temp-vuecheck
-.cursor
-.kiro
+.cursor/
+.kiro/
 
 # Logs
 logs/
