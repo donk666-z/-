@@ -2,13 +2,33 @@ class WebSocketClient {
   constructor() {
     this.socketTask = null
     this.isConnected = false
+    this.connecting = false
     this.reconnectTimer = null
     this.heartbeatTimer = null
     this.listeners = {}
+    this.currentUrl = ''
+    this.manualClose = false
   }
 
   connect(url) {
+    if (!url) {
+      return
+    }
+    if ((this.isConnected || this.connecting) && this.currentUrl === url) {
+      return
+    }
+    this.manualClose = false
+    this.currentUrl = url
     const token = uni.getStorageSync('token')
+    if (!token) {
+      return
+    }
+
+    if (this.socketTask) {
+      this.socketTask.close()
+      this.socketTask = null
+    }
+    this.connecting = true
 
     this.socketTask = uni.connectSocket({
       url: `${url}?token=${token}`,
@@ -18,6 +38,7 @@ class WebSocketClient {
     })
 
     this.socketTask.onOpen(() => {
+      this.connecting = false
       this.isConnected = true
       console.log('WebSocket已打开')
       this.startHeartbeat()
@@ -33,13 +54,18 @@ class WebSocketClient {
     })
 
     this.socketTask.onClose(() => {
+      this.connecting = false
       this.isConnected = false
       console.log('WebSocket已关闭')
       this.stopHeartbeat()
-      this.reconnect(url)
+      this.socketTask = null
+      if (!this.manualClose) {
+        this.reconnect(url)
+      }
     })
 
     this.socketTask.onError((err) => {
+      this.connecting = false
       console.error('WebSocket错误', err)
     })
   }
@@ -61,6 +87,10 @@ class WebSocketClient {
 
   off(event, callback) {
     if (this.listeners[event]) {
+      if (!callback) {
+        this.listeners[event] = []
+        return
+      }
       this.listeners[event] = this.listeners[event].filter(cb => cb !== callback)
     }
   }
@@ -96,6 +126,7 @@ class WebSocketClient {
   }
 
   close() {
+    this.manualClose = true
     this.stopHeartbeat()
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
@@ -106,6 +137,8 @@ class WebSocketClient {
       this.socketTask = null
     }
     this.isConnected = false
+    this.connecting = false
+    this.currentUrl = ''
   }
 }
 

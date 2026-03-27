@@ -51,6 +51,7 @@
 
 <script>
 import { getDashboard } from '@/api/stats'
+import merchantRealtime from '@/utils/merchant-realtime'
 
 export default {
   data() {
@@ -91,6 +92,7 @@ export default {
         content: '确定要退出登录吗？',
         success: (res) => {
           if (res.confirm) {
+            merchantRealtime.stop()
             this.$store.commit('LOGOUT')
             uni.navigateTo({ url: '/pages/login/index' })
           }

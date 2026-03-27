@@ -19,16 +19,17 @@
 
     <view class="current-task" v-if="currentTask" @click="goToDetail(currentTask.id)">
       <view class="task-header">
-        <u-tag text="配送中" type="warning" size="mini"></u-tag>
+        <u-tag :text="currentTaskStatusText" :type="currentTaskStatusType" size="mini"></u-tag>
         <text class="task-fee">¥{{ formatMoney(currentTask.deliveryFee) }}</text>
       </view>
       <view class="task-merchant">{{ currentTask.merchantName }}</view>
       <view class="task-address">{{ currentTask.deliveryAddress }}</view>
+      <view class="task-tip">{{ currentTaskTip }}</view>
     </view>
 
-    <view class="section-title">可接订单</view>
+    <view class="section-title" v-if="isOnline && !currentTask">可接订单</view>
 
-    <view class="task-list" v-if="isOnline">
+    <view class="task-list" v-if="isOnline && !currentTask">
       <view class="task-item" v-for="item in taskList" :key="item.id">
         <view class="task-info">
           <view class="merchant-name">{{ item.merchantName }}</view>
@@ -42,6 +43,7 @@
           </view>
           <view class="task-meta">
             <text class="fee">配送费 ¥{{ formatMoney(item.deliveryFee) }}</text>
+            <text class="task-status-note">{{ item.status === 'accepted' ? '待出餐' : '可取餐' }}</text>
             <text class="distance" v-if="item.distance">{{ item.distance }}km</text>
           </view>
         </view>
@@ -52,6 +54,10 @@
       <u-empty v-if="taskList.length === 0" text="暂无可接订单" mode="list"></u-empty>
     </view>
 
+    <view class="busy-tip" v-else-if="currentTask">
+      <u-empty text="先完成当前订单，再继续接新单" mode="list"></u-empty>
+    </view>
+
     <view class="offline-tip" v-else>
       <u-empty text="开启在线接单后才会展示待抢订单" mode="list"></u-empty>
     </view>
@@ -59,7 +65,7 @@
 </template>
 
 <script>
-import { getAvailableTasks, grabTask, getCurrentTask } from '@/api/task'
+import { getAvailableTasks, getCurrentTask, grabTask } from '@/api/task'
 import { getRiderProfile, updateRiderStatus } from '@/api/profile'
 import { ensureLogin } from '@/utils/session'
 
@@ -79,9 +85,45 @@ export default {
     },
     statusText() {
       if (this.currentTask) {
-        return '配送中'
+        if (this.currentTask.status === 'accepted') {
+          return '待出餐'
+        }
+        return this.currentTask.status === 'prepared' ? '待取餐' : '配送中'
       }
       return this.isOnline ? '在线接单' : '离线休息'
+    },
+    currentTaskStatusText() {
+      const status = this.currentTask ? this.currentTask.status : ''
+      const map = {
+        accepted: '待出餐',
+        prepared: '待取餐',
+        delivering: '配送中',
+        delivered: '待确认',
+        completed: '已完成'
+      }
+      return map[status] || '进行中'
+    },
+    currentTaskStatusType() {
+      const status = this.currentTask ? this.currentTask.status : ''
+      const map = {
+        accepted: 'info',
+        prepared: 'primary',
+        delivering: 'warning',
+        delivered: 'success',
+        completed: 'success'
+      }
+      return map[status] || 'info'
+    },
+    currentTaskTip() {
+      if (!this.currentTask) {
+        return ''
+      }
+      if (this.currentTask.status === 'accepted') {
+        return '你已抢到这单，等待商户出餐后即可前往取餐'
+      }
+      return this.currentTask.status === 'prepared'
+        ? '商户已出餐，点击进入详情后确认取餐'
+        : '已取餐，按地址配送后确认送达'
     }
   },
   onShow() {
@@ -114,7 +156,7 @@ export default {
       }
 
       await this.loadCurrentTask()
-      if (this.isOnline) {
+      if (this.isOnline && !this.currentTask) {
         await this.loadTasks()
       } else {
         this.taskList = []
@@ -133,10 +175,10 @@ export default {
         await updateRiderStatus(nextStatus)
         this.$store.commit('SET_RIDER_STATUS', nextStatus)
         this.isOnline = value
-        if (value) {
+        if (value && !this.currentTask) {
           await this.loadTasks()
           uni.showToast({ title: '已开始接单', icon: 'none' })
-        } else {
+        } else if (!value) {
           this.taskList = []
           uni.showToast({ title: '已切换离线', icon: 'none' })
         }
@@ -157,6 +199,9 @@ export default {
       try {
         this.currentTask = await getCurrentTask()
         this.$store.commit('SET_CURRENT_TASK', this.currentTask)
+        if (this.currentTask) {
+          this.taskList = []
+        }
       } catch (error) {
         this.currentTask = null
         this.$store.commit('SET_CURRENT_TASK', null)
@@ -166,8 +211,8 @@ export default {
       try {
         await grabTask(id)
         uni.showToast({ title: '抢单成功', icon: 'none' })
-        await this.loadTasks()
         await this.loadCurrentTask()
+        await this.loadTasks()
       } catch (error) {
         console.error(error)
       }
@@ -252,7 +297,7 @@ export default {
 }
 
 .current-task {
-  background: #fff3e0;
+  background: #fff7e8;
   border-radius: 16rpx;
   padding: 24rpx;
   margin-bottom: 20rpx;
@@ -281,6 +326,12 @@ export default {
 .task-address {
   font-size: 24rpx;
   color: #666;
+}
+
+.task-tip {
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: #ff8f1f;
 }
 
 .section-title {
@@ -340,11 +391,18 @@ export default {
   color: #999;
 }
 
+.task-status-note {
+  font-size: 24rpx;
+  color: #1f7ae0;
+  margin-right: 20rpx;
+}
+
 .task-action {
   margin-left: 20rpx;
 }
 
-.offline-tip {
+.offline-tip,
+.busy-tip {
   margin-top: 100rpx;
 }
 </style>

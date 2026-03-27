@@ -14,6 +14,13 @@ export const grabTask = (id) => {
   })
 }
 
+export const pickupTask = (id) => {
+  return request({
+    url: `/rider/task/${id}/pickup`,
+    method: 'POST'
+  })
+}
+
 export const deliverTask = (id) => {
   return request({
     url: `/rider/task/${id}/deliver`,
@@ -24,6 +31,13 @@ export const deliverTask = (id) => {
 export const getCurrentTask = () => {
   return request({
     url: '/rider/task/current',
+    method: 'GET'
+  })
+}
+
+export const getTaskDetail = (id) => {
+  return request({
+    url: `/rider/task/${id}`,
     method: 'GET'
   })
 }

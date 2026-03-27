@@ -34,7 +34,6 @@
 
 <script>
 import { getOrderList, acceptOrder, prepareOrder } from '@/api/order'
-import websocket from '@/utils/websocket'
 
 export default {
   data() {
@@ -48,17 +47,11 @@ export default {
       currentTab: 0,
       orders: [],
       page: 1,
-      hasMore: true,
-      audioCtx: null
+      hasMore: true
     }
   },
   onLoad() {
-    this.audioCtx = uni.createInnerAudioContext()
-    this.audioCtx.src = '/static/new-order.mp3'
-    websocket.on('newOrder', () => {
-      this.playAlert()
-      this.refreshList()
-    })
+    uni.$on('merchant:new-order', this.handleNewOrder)
   },
   onShow() {
     const token = uni.getStorageSync('token')
@@ -69,10 +62,7 @@ export default {
     this.refreshList()
   },
   onUnload() {
-    websocket.off('newOrder')
-    if (this.audioCtx) {
-      this.audioCtx.destroy()
-    }
+    uni.$off('merchant:new-order', this.handleNewOrder)
   },
   methods: {
     statusMap() {
@@ -127,6 +117,9 @@ export default {
     loadMore() {
       if (!this.hasMore) return
     },
+    handleNewOrder() {
+      this.refreshList()
+    },
     async handleAccept(id) {
       try {
         await acceptOrder(id)
@@ -144,12 +137,6 @@ export default {
       } catch (e) {
         console.error('出餐失败', e)
       }
-    },
-    playAlert() {
-      if (this.audioCtx) {
-        this.audioCtx.play()
-      }
-      uni.vibrateLong()
     },
     goDetail(id) {
       uni.navigateTo({ url: `/pages/order/detail?id=${id}` })

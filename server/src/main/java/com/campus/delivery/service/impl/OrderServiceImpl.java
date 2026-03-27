@@ -13,12 +13,14 @@ import com.campus.delivery.entity.OrderItem;
 import com.campus.delivery.entity.Review;
 import com.campus.delivery.entity.Rider;
 import com.campus.delivery.entity.SystemConfig;
+import com.campus.delivery.entity.Transaction;
 import com.campus.delivery.exception.BusinessException;
 import com.campus.delivery.mapper.OrderItemMapper;
 import com.campus.delivery.mapper.OrderMapper;
 import com.campus.delivery.mapper.ReviewMapper;
 import com.campus.delivery.mapper.RiderMapper;
 import com.campus.delivery.mapper.SystemConfigMapper;
+import com.campus.delivery.mapper.TransactionMapper;
 import com.campus.delivery.model.ComboConfig;
 import com.campus.delivery.model.ComboSnapshot;
 import com.campus.delivery.service.DishService;
@@ -32,13 +34,17 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -55,6 +61,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     private static final int DEFAULT_DELIVER_MINUTES = 30;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final DateTimeFormatter RECENT_ORDER_TIME_FORMATTER = DateTimeFormatter.ofPattern("MM-dd HH:mm");
+    private static final DateTimeFormatter WEEK_TREND_LABEL_FORMATTER = DateTimeFormatter.ofPattern("M/d");
 
     @Autowired
     private OrderItemMapper orderItemMapper;
@@ -82,6 +90,9 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     @Autowired
     private OrderRealtimeNotifier orderRealtimeNotifier;
+
+    @Autowired
+    private TransactionMapper transactionMapper;
 
     private BigDecimal resolveDeliveryFee(BigDecimal clientFee) {
         BigDecimal fee = new BigDecimal("3.00");
@@ -176,6 +187,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             dish.setStock(currentStock - entry.getValue());
             dishService.updateById(dish);
         }
+
+        notifyMerchantNewOrderAfterCommit(order);
 
         return order;
     }
@@ -363,11 +376,13 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (!"delivered".equals(existing.getStatus())) {
             throw new BusinessException(400, "请等待送达后再确认收货");
         }
+        LocalDateTime completedTime = LocalDateTime.now();
         Order order = new Order();
         order.setId(id);
         order.setStatus("completed");
-        order.setCompletedTime(LocalDateTime.now());
+        order.setCompletedTime(completedTime);
         updateById(order);
+        createMerchantIncomeTransaction(existing, completedTime);
     }
 
     @Override
@@ -403,6 +418,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void pickupOrder(Long id, Long riderId) {
         Order existing = getById(id);
         if (existing == null) {
@@ -420,16 +436,36 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         order.setRiderId(riderId);
         order.setEstimatedTime(DEFAULT_DELIVER_MINUTES);
         updateById(order);
+        Rider rider = new Rider();
+        rider.setId(riderId);
+        rider.setStatus("delivering");
+        riderMapper.updateById(rider);
         String eta = "约 " + DEFAULT_DELIVER_MINUTES + " 分钟";
         orderRealtimeNotifier.notifyOrderStatus(id, "delivering", eta);
     }
 
     @Override
-    public void deliverOrder(Long id) {
+    @Transactional(rollbackFor = Exception.class)
+    public void deliverOrder(Long id, Long riderId) {
+        Order existing = getById(id);
+        if (existing == null) {
+            throw new BusinessException(404, "订单不存在");
+        }
+        if (existing.getRiderId() == null || !existing.getRiderId().equals(riderId)) {
+            throw new BusinessException(403, "无权配送该订单");
+        }
+        if (!"delivering".equals(existing.getStatus())) {
+            throw new BusinessException(400, "当前订单还不能确认送达");
+        }
         Order order = new Order();
         order.setId(id);
         order.setStatus("delivered");
         updateById(order);
+        Rider rider = new Rider();
+        rider.setId(riderId);
+        rider.setStatus("online");
+        riderMapper.updateById(rider);
+        redisTemplate.delete("rider:location:" + id);
         orderRealtimeNotifier.notifyOrderStatus(id, "delivered", null);
     }
 
@@ -458,28 +494,48 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Override
     public Map<String, Object> getMerchantStats(Long merchantId) {
         Map<String, Object> stats = new HashMap<>();
-        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
+        LocalDate today = LocalDate.now();
+        LocalDateTime todayStart = today.atStartOfDay();
+        LocalDate weekStartDate = today.minusDays(6);
+        LocalDateTime weekStart = weekStartDate.atStartOfDay();
 
-        LambdaQueryWrapper<Order> todayWrapper = new LambdaQueryWrapper<>();
-        todayWrapper.eq(Order::getMerchantId, merchantId)
-                .ge(Order::getCreatedAt, todayStart)
-                .eq(Order::getStatus, "completed");
-        stats.put("todayOrders", count(todayWrapper));
+        LambdaQueryWrapper<Order> completedWrapper = new LambdaQueryWrapper<>();
+        completedWrapper.eq(Order::getMerchantId, merchantId)
+                .eq(Order::getStatus, "completed")
+                .ge(Order::getCompletedTime, weekStart)
+                .orderByAsc(Order::getCompletedTime);
+        List<Order> weekCompletedOrders = list(completedWrapper);
 
-        LambdaQueryWrapper<Order> revenueWrapper = new LambdaQueryWrapper<>();
-        revenueWrapper.eq(Order::getMerchantId, merchantId)
-                .ge(Order::getCreatedAt, todayStart)
-                .eq(Order::getStatus, "completed");
-        List<Order> todayCompleted = list(revenueWrapper);
-        BigDecimal todayRevenue = todayCompleted.stream()
-                .map(Order::getDishPrice)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        stats.put("todayRevenue", todayRevenue);
+        List<Order> todayCompletedOrders = weekCompletedOrders.stream()
+                .filter(order -> order.getCompletedTime() != null && !order.getCompletedTime().isBefore(todayStart))
+                .collect(Collectors.toList());
+        stats.put("todayOrders", todayCompletedOrders.size());
+        stats.put("todayRevenue", sumMerchantRevenue(todayCompletedOrders));
+        stats.put("weeklyOrders", weekCompletedOrders.size());
+        stats.put("weeklyRevenue", sumMerchantRevenue(weekCompletedOrders));
+        stats.put("weeklyTrend", buildWeeklyTrend(weekCompletedOrders, weekStartDate, today));
+        stats.put("hotDishes", buildHotDishes(weekCompletedOrders));
 
         LambdaQueryWrapper<Order> pendingWrapper = new LambdaQueryWrapper<>();
         pendingWrapper.eq(Order::getMerchantId, merchantId)
                 .eq(Order::getStatus, "paid");
-        stats.put("pendingOrders", count(pendingWrapper));
+        long pendingCount = count(pendingWrapper);
+        stats.put("pendingOrders", pendingCount);
+        stats.put("pendingCount", pendingCount);
+
+        LambdaQueryWrapper<Dish> dishWrapper = new LambdaQueryWrapper<>();
+        dishWrapper.eq(Dish::getMerchantId, merchantId)
+                .eq(Dish::getStatus, "available");
+        stats.put("totalDishes", dishService.count(dishWrapper));
+
+        LambdaQueryWrapper<Order> recentWrapper = new LambdaQueryWrapper<>();
+        recentWrapper.eq(Order::getMerchantId, merchantId)
+                .orderByDesc(Order::getCreatedAt)
+                .last("limit 5");
+        List<Map<String, Object>> recentOrders = list(recentWrapper).stream()
+                .map(this::toRecentOrderSummary)
+                .collect(Collectors.toList());
+        stats.put("recentOrders", recentOrders);
 
         return stats;
     }
@@ -505,6 +561,168 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         stats.put("todayRevenue", todayRevenue);
 
         return stats;
+    }
+
+    private void createMerchantIncomeTransaction(Order order, LocalDateTime completedTime) {
+        if (order.getMerchantId() == null
+                || order.getDishPrice() == null
+                || order.getDishPrice().compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+
+        LambdaQueryWrapper<Transaction> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Transaction::getOrderId, order.getId())
+                .eq(Transaction::getMerchantId, order.getMerchantId())
+                .eq(Transaction::getType, "income");
+        Long count = transactionMapper.selectCount(wrapper);
+        if (count != null && count > 0) {
+            return;
+        }
+
+        Transaction transaction = new Transaction();
+        transaction.setMerchantId(order.getMerchantId());
+        transaction.setOrderId(order.getId());
+        transaction.setAmount(order.getDishPrice());
+        transaction.setType("income");
+        transaction.setStatus("completed");
+        transaction.setRemark("订单完成自动入账");
+        transaction.setCreatedAt(completedTime);
+        transaction.setUpdatedAt(completedTime);
+        transactionMapper.insert(transaction);
+    }
+
+    private void notifyMerchantNewOrderAfterCommit(Order order) {
+        if (order == null || order.getId() == null) {
+            return;
+        }
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            orderRealtimeNotifier.notifyMerchantNewOrder(order);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                orderRealtimeNotifier.notifyMerchantNewOrder(order);
+            }
+        });
+    }
+
+    private BigDecimal sumMerchantRevenue(List<Order> orders) {
+        if (orders == null || orders.isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+        return orders.stream()
+                .map(Order::getDishPrice)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private List<Map<String, Object>> buildWeeklyTrend(List<Order> completedOrders,
+                                                       LocalDate startDate,
+                                                       LocalDate endDate) {
+        Map<LocalDate, TrendSummary> trendByDay = new LinkedHashMap<>();
+        LocalDate currentDate = startDate;
+        while (!currentDate.isAfter(endDate)) {
+            trendByDay.put(currentDate, new TrendSummary(currentDate));
+            currentDate = currentDate.plusDays(1);
+        }
+
+        if (completedOrders != null) {
+            for (Order order : completedOrders) {
+                if (order.getCompletedTime() == null) {
+                    continue;
+                }
+                LocalDate completedDate = order.getCompletedTime().toLocalDate();
+                TrendSummary summary = trendByDay.get(completedDate);
+                if (summary == null) {
+                    continue;
+                }
+                summary.incrementOrders();
+                summary.addRevenue(order.getDishPrice());
+            }
+        }
+
+        return trendByDay.values().stream()
+                .map(summary -> {
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("date", summary.getDate().toString());
+                    item.put("label", summary.getDate().format(WEEK_TREND_LABEL_FORMATTER));
+                    item.put("orderCount", summary.getOrderCount());
+                    item.put("revenue", summary.getRevenue());
+                    return item;
+                })
+                .collect(Collectors.toList());
+    }
+
+    private List<Map<String, Object>> buildHotDishes(List<Order> completedOrders) {
+        if (completedOrders == null || completedOrders.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<Long> orderIds = completedOrders.stream()
+                .map(Order::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        if (orderIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        Map<Long, List<OrderItem>> itemsByOrder = loadOrderItemsByOrderIds(orderIds);
+        Map<String, DishSalesSummary> summaryMap = new HashMap<>();
+
+        for (Order order : completedOrders) {
+            List<OrderItem> items = itemsByOrder.get(order.getId());
+            if (items == null || items.isEmpty()) {
+                continue;
+            }
+            for (OrderItem item : items) {
+                String key = item.getDishId() != null
+                        ? "dish-" + item.getDishId()
+                        : "name-" + nullToEmpty(item.getDishName());
+                DishSalesSummary summary = summaryMap.computeIfAbsent(key, ignored -> new DishSalesSummary());
+                summary.setDishId(item.getDishId());
+                summary.setName(item.getDishName());
+                summary.setImage(item.getDishImage());
+                summary.setType(normalizeItemType(item.getItemType()));
+                summary.addSalesCount(item.getQuantity());
+                summary.addRevenue(item.getPrice(), item.getQuantity());
+            }
+        }
+
+        List<DishSalesSummary> sortedSummaries = summaryMap.values().stream()
+                .sorted(Comparator.comparing(DishSalesSummary::getSalesCount, Comparator.reverseOrder())
+                        .thenComparing(DishSalesSummary::getRevenue, Comparator.reverseOrder())
+                        .thenComparing(DishSalesSummary::getName, Comparator.nullsLast(Comparator.naturalOrder())))
+                .limit(5)
+                .collect(Collectors.toList());
+
+        List<Map<String, Object>> hotDishes = new ArrayList<>();
+        for (int i = 0; i < sortedSummaries.size(); i++) {
+            DishSalesSummary summary = sortedSummaries.get(i);
+            Map<String, Object> item = new HashMap<>();
+            item.put("rank", i + 1);
+            item.put("dishId", summary.getDishId());
+            item.put("name", summary.getName());
+            item.put("image", summary.getImage());
+            item.put("type", summary.getType());
+            item.put("salesCount", summary.getSalesCount());
+            item.put("revenue", summary.getRevenue());
+            hotDishes.add(item);
+        }
+        return hotDishes;
+    }
+
+    private Map<String, Object> toRecentOrderSummary(Order order) {
+        Map<String, Object> summary = new HashMap<>();
+        summary.put("id", order.getId());
+        summary.put("orderNo", order.getOrderNo());
+        summary.put("totalPrice", order.getTotalPrice());
+        summary.put("status", order.getStatus());
+        summary.put(
+                "createTime",
+                order.getCreatedAt() == null ? "" : order.getCreatedAt().format(RECENT_ORDER_TIME_FORMATTER)
+        );
+        return summary;
     }
 
     private PreparedOrderItem prepareOrderItem(CreateOrderDTO.OrderItemDTO itemDTO,
@@ -1092,6 +1310,98 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
         public void setComboSnapshot(ComboSnapshot comboSnapshot) {
             this.comboSnapshot = comboSnapshot;
+        }
+    }
+
+    private static class TrendSummary {
+        private final LocalDate date;
+        private long orderCount;
+        private BigDecimal revenue = BigDecimal.ZERO;
+
+        private TrendSummary(LocalDate date) {
+            this.date = date;
+        }
+
+        public LocalDate getDate() {
+            return date;
+        }
+
+        public long getOrderCount() {
+            return orderCount;
+        }
+
+        public BigDecimal getRevenue() {
+            return revenue;
+        }
+
+        public void incrementOrders() {
+            orderCount++;
+        }
+
+        public void addRevenue(BigDecimal amount) {
+            if (amount != null) {
+                revenue = revenue.add(amount);
+            }
+        }
+    }
+
+    private static class DishSalesSummary {
+        private Long dishId;
+        private String name;
+        private String image;
+        private String type;
+        private Integer salesCount = 0;
+        private BigDecimal revenue = BigDecimal.ZERO;
+
+        public Long getDishId() {
+            return dishId;
+        }
+
+        public void setDishId(Long dishId) {
+            this.dishId = dishId;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public String getImage() {
+            return image;
+        }
+
+        public void setImage(String image) {
+            this.image = image;
+        }
+
+        public String getType() {
+            return type;
+        }
+
+        public void setType(String type) {
+            this.type = type;
+        }
+
+        public Integer getSalesCount() {
+            return salesCount;
+        }
+
+        public BigDecimal getRevenue() {
+            return revenue;
+        }
+
+        public void addSalesCount(Integer quantity) {
+            salesCount += quantity == null ? 0 : quantity;
+        }
+
+        public void addRevenue(BigDecimal unitPrice, Integer quantity) {
+            if (unitPrice == null || quantity == null || quantity <= 0) {
+                return;
+            }
+            revenue = revenue.add(unitPrice.multiply(BigDecimal.valueOf(quantity)));
         }
     }
 }

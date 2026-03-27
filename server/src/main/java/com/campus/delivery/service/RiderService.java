@@ -1,14 +1,20 @@
 package com.campus.delivery.service;
 
 import com.campus.delivery.dto.RiderProfileVO;
-import com.campus.delivery.entity.Order;
+import com.campus.delivery.dto.RiderTaskVO;
 
 import java.util.List;
 import java.util.Map;
 
 public interface RiderService {
 
-    List<Order> getAvailableOrders();
+    List<RiderTaskVO> getAvailableOrders(Long riderId);
+
+    RiderTaskVO getCurrentTask(Long riderId);
+
+    RiderTaskVO getTaskDetail(Long orderId, Long riderId);
+
+    List<RiderTaskVO> getHistoryOrders(Long riderId);
 
     void grabOrder(Long orderId, Long riderId);
 

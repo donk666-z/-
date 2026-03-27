@@ -86,6 +86,7 @@
 
 <script>
 import { wxLogin, merchantLogin } from '@/api/auth'
+import merchantRealtime from '@/utils/merchant-realtime'
 
 export default {
   data() {
@@ -166,9 +167,20 @@ export default {
       })
     },
     finishLogin(res) {
-      this.$store.dispatch('login', {
+      const store = this.$store
+      store.dispatch('login', {
         token: res.token,
         userInfo: res.userInfo
+      })
+      merchantRealtime.start({
+        onNewOrder: (payload) => {
+          const pendingCount = Number(payload.pendingCount || 0)
+          store.commit('SET_PENDING_COUNT', pendingCount)
+          uni.showToast({
+            title: '收到新订单，请及时处理',
+            icon: 'none'
+          })
+        }
       })
       uni.showToast({ title: '登录成功', icon: 'none' })
       setTimeout(() => {

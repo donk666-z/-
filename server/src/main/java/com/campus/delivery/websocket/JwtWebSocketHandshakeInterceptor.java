@@ -20,6 +20,7 @@ public class JwtWebSocketHandshakeInterceptor implements HandshakeInterceptor {
         String token = ((ServletServerHttpRequest) request).getServletRequest().getParameter("token");
         if (token != null && JwtUtil.validateToken(token)) {
             attributes.put("userId", JwtUtil.getUserIdFromToken(token));
+            attributes.put("role", JwtUtil.getRoleFromToken(token));
             return true;
         }
         return false;

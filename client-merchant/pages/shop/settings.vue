@@ -179,6 +179,7 @@
 
 <script>
 import { getShopInfo, updateShopInfo, updateStatus } from '@/api/shop'
+import merchantRealtime from '@/utils/merchant-realtime'
 
 export default {
   data() {
@@ -285,6 +286,7 @@ export default {
         content: '确定要退出当前商户账号吗？',
         success: (res) => {
           if (res.confirm) {
+            merchantRealtime.stop()
             this.$store.commit('LOGOUT')
             uni.navigateTo({ url: '/pages/login/index' })
           }

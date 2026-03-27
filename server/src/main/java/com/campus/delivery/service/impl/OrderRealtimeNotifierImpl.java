@@ -1,5 +1,6 @@
 package com.campus.delivery.service.impl;
 
+import com.campus.delivery.entity.Order;
 import com.campus.delivery.service.OrderRealtimeNotifier;
 import com.campus.delivery.websocket.OrderTrackingWebSocketHandler;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,5 +20,10 @@ public class OrderRealtimeNotifierImpl implements OrderRealtimeNotifier {
     @Override
     public void notifyRiderLocation(Long orderId, double lat, double lng) {
         orderTrackingWebSocketHandler.broadcastRiderLocation(orderId, lat, lng);
+    }
+
+    @Override
+    public void notifyMerchantNewOrder(Order order) {
+        orderTrackingWebSocketHandler.broadcastMerchantNewOrder(order);
     }
 }

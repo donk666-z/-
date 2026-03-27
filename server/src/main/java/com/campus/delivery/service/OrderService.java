@@ -34,7 +34,7 @@ public interface OrderService extends IService<Order> {
 
     void pickupOrder(Long id, Long riderId);
 
-    void deliverOrder(Long id);
+    void deliverOrder(Long id, Long riderId);
 
     List<Order> getOrdersByMerchant(Long merchantId, String status);
 
