@@ -1,0 +1,96 @@
+{
+  "pages": [
+    {
+      "path": "pages/order/list",
+      "style": {
+        "navigationBarTitleText": "订单管理"
+      }
+    },
+    {
+      "path": "pages/order/detail",
+      "style": {
+        "navigationBarTitleText": "订单详情"
+      }
+    },
+    {
+      "path": "pages/dish/list",
+      "style": {
+        "navigationBarTitleText": "菜品管理"
+      }
+    },
+    {
+      "path": "pages/dish/edit",
+      "style": {
+        "navigationBarTitleText": "编辑菜品"
+      }
+    },
+    {
+      "path": "pages/stats/index",
+      "style": {
+        "navigationBarTitleText": "数据统计"
+      }
+    },
+    {
+      "path": "pages/shop/settings",
+      "style": {
+        "navigationBarTitleText": "店铺设置"
+      }
+    },
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "工作台"
+      }
+    },
+    {
+      "path": "pages/login/index",
+      "style": {
+        "navigationBarTitleText": "商户登录"
+      }
+    },
+    {
+      "path": "pages/register/index",
+      "style": {
+        "navigationBarTitleText": "商户注册"
+      }
+    }
+  ],
+  "tabBar": {
+    "color": "#999999",
+    "selectedColor": "#FF6B00",
+    "backgroundColor": "#FFFFFF",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/order/list",
+        "text": "订单管理",
+        "iconPath": "static/tabbar/order.png",
+        "selectedIconPath": "static/tabbar/order-active.png"
+      },
+      {
+        "pagePath": "pages/dish/list",
+        "text": "菜品管理",
+        "iconPath": "static/tabbar/dish.png",
+        "selectedIconPath": "static/tabbar/dish-active.png"
+      },
+      {
+        "pagePath": "pages/stats/index",
+        "text": "数据统计",
+        "iconPath": "static/tabbar/stats.png",
+        "selectedIconPath": "static/tabbar/stats-active.png"
+      },
+      {
+        "pagePath": "pages/shop/settings",
+        "text": "店铺设置",
+        "iconPath": "static/tabbar/shop.png",
+        "selectedIconPath": "static/tabbar/shop-active.png"
+      }
+    ]
+  },
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "校园外卖-商户端",
+    "navigationBarBackgroundColor": "#FFFFFF",
+    "backgroundColor": "#F8F8F8"
+  }
+}

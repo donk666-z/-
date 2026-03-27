@@ -1,0 +1,30 @@
+{
+  "name": "校园外卖-骑手端",
+  "appid": "",
+  "description": "校园外卖配送系统 - 骑手端小程序",
+  "versionName": "1.0.0",
+  "versionCode": "100",
+  "transformPx": false,
+  "mp-weixin": {
+    "appid": "",
+    "setting": {
+      "urlCheck": false,
+      "es6": true,
+      "postcss": true,
+      "minified": true,
+      "checkSiteMap": false
+    },
+    "usingComponents": true,
+    "permission": {
+      "scope.userLocation": {
+        "desc": "你的位置信息将用于实时配送定位"
+      }
+    },
+    "requiredPrivateInfos": [
+      "getLocation"
+    ]
+  },
+  "uniStatistics": {
+    "enable": false
+  }
+}
