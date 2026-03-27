@@ -1,0 +1,64 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: campus-delivery
+  
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/campus_delivery?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: 123456
+  
+  redis:
+    host: localhost
+    port: 6379
+    password: 
+    database: 0
+    timeout: 5000ms
+    lettuce:
+      pool:
+        max-active: 8
+        max-wait: -1ms
+        max-idle: 8
+        min-idle: 0
+  
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  type-aliases-package: com.campus.delivery.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+jwt:
+  # HS256 的 Keys.hmacShaKeyFor(secretBytes) 要求密钥长度至少 256 bits(32字节)。
+  # 当前 secret 长度为 31 字节(248 bits) 会导致登录/鉴权时抛出异常。
+  secret: campus_delivery_secret_key_20240
+  expiration: 604800000
+
+wechat:
+  appid: your_wx_appid
+  secret: your_wx_secret
+
+upload:
+  path: /uploads/
+  
+logging:
+  level:
+    com.campus.delivery: debug
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{50} - %msg%n"

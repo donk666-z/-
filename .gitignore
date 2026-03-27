@@ -16,6 +16,9 @@ yarn.lock
 *.njsproj
 *.sln
 *.sw?
+.codex-temp-vuecheck
+.cursor
+.kiro
 
 # Logs
 logs/
