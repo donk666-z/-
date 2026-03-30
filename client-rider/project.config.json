@@ -1,8 +1,17 @@
 {
+  "description": "骑手端小程序项目配置",
+  "packOptions": {
+    "ignore": [],
+    "include": []
+  },
   "setting": {
+    "urlCheck": false,
     "es6": true,
     "postcss": true,
     "minified": true,
+    "newFeature": true,
+    "bigPackageSizeSupport": true,
+    "checkSiteMap": false,
     "uglifyFileName": false,
     "enhance": true,
     "packNpmRelationList": [],
@@ -15,11 +24,29 @@
     "minifyWXML": true
   },
   "compileType": "miniprogram",
-  "simulatorPluginLibVersion": {},
-  "packOptions": {
-    "ignore": [],
-    "include": []
-  },
+  "libVersion": "",
   "appid": "",
+  "projectname": "campus-delivery-rider",
+  "miniprogramRoot": "./unpackage/dist/dev/mp-weixin",
+  "srcMiniprogramRoot": "./unpackage/dist/dev/mp-weixin",
+  "simulatorPluginLibVersion": {},
+  "condition": {
+    "search": {
+      "current": -1,
+      "list": []
+    },
+    "conversation": {
+      "current": -1,
+      "list": []
+    },
+    "game": {
+      "current": -1,
+      "list": []
+    },
+    "miniprogram": {
+      "current": -1,
+      "list": []
+    }
+  },
   "editorSetting": {}
 }

@@ -1,6 +1,7 @@
 package com.campus.delivery.service;
 
 import com.campus.delivery.dto.RiderProfileVO;
+import com.campus.delivery.dto.RiderRouteVO;
 import com.campus.delivery.dto.RiderTaskVO;
 
 import java.util.List;
@@ -13,6 +14,8 @@ public interface RiderService {
     RiderTaskVO getCurrentTask(Long riderId);
 
     RiderTaskVO getTaskDetail(Long orderId, Long riderId);
+
+    RiderRouteVO getRoutePlan(Long orderId, Long riderId, Double fromLat, Double fromLng);
 
     List<RiderTaskVO> getHistoryOrders(Long riderId);
 

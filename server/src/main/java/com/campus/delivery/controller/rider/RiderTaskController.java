@@ -1,6 +1,7 @@
 package com.campus.delivery.controller.rider;
 
 import com.campus.delivery.common.Result;
+import com.campus.delivery.dto.RiderRouteVO;
 import com.campus.delivery.dto.RiderTaskVO;
 import com.campus.delivery.service.OrderService;
 import com.campus.delivery.service.RiderService;
@@ -67,5 +68,15 @@ public class RiderTaskController {
         Long riderId = (Long) request.getAttribute("userId");
         RiderTaskVO task = riderService.getTaskDetail(id, riderId);
         return Result.success(task);
+    }
+
+    @GetMapping("/{id}/route")
+    public Result<RiderRouteVO> getRoute(@PathVariable Long id,
+                                         @RequestParam(required = false) Double fromLat,
+                                         @RequestParam(required = false) Double fromLng,
+                                         HttpServletRequest request) {
+        Long riderId = (Long) request.getAttribute("userId");
+        RiderRouteVO route = riderService.getRoutePlan(id, riderId, fromLat, fromLng);
+        return Result.success(route);
     }
 }

@@ -2,79 +2,84 @@ class WebSocketClient {
   constructor() {
     this.socketTask = null
     this.isConnected = false
-    this.isConnecting = false
+    this.connecting = false
     this.reconnectTimer = null
     this.heartbeatTimer = null
     this.listeners = {}
-    this.currentUrl = null
+    this.currentUrl = ''
+    this.manualClose = false
   }
 
   connect(url) {
-    if (this.isConnecting || this.isConnected) {
-      console.log('WebSocket已在连接中或已连接')
+    if (!url) {
+      return
+    }
+    if ((this.isConnected || this.connecting) && this.currentUrl === url) {
       return
     }
 
-    const token = uni.getStorageSync('token')
-    this.isConnecting = true
+    this.manualClose = false
     this.currentUrl = url
+
+    const token = uni.getStorageSync('token')
+    if (!token) {
+      return
+    }
+
+    if (this.socketTask) {
+      this.socketTask.close()
+      this.socketTask = null
+    }
+    this.connecting = true
 
     this.socketTask = uni.connectSocket({
       url: `${url}?token=${token}`,
       success: () => {
         console.log('WebSocket连接成功')
-      },
-      fail: (err) => {
-        console.error('WebSocket连接失败', err)
-        this.isConnecting = false
       }
     })
 
     this.socketTask.onOpen(() => {
       this.isConnected = true
-      this.isConnecting = false
-      console.log('WebSocket已打开')
+      this.connecting = false
       this.startHeartbeat()
+      this.emit('socketOpen')
     })
 
     this.socketTask.onMessage((res) => {
       try {
         const data = JSON.parse(res.data)
         this.handleMessage(data)
-      } catch (e) {
-        console.error('解析消息失败', e)
+      } catch (error) {
+        console.error('解析 WebSocket 消息失败', error)
       }
     })
 
     this.socketTask.onClose(() => {
       this.isConnected = false
-      this.isConnecting = false
-      console.log('WebSocket已关闭')
+      this.connecting = false
       this.stopHeartbeat()
+      this.socketTask = null
+      this.emit('socketClose')
+      if (!this.manualClose) {
+        this.reconnect(url)
+      }
     })
 
-    this.socketTask.onError((err) => {
-      console.error('WebSocket错误', err)
+    this.socketTask.onError((error) => {
       this.isConnected = false
-      this.isConnecting = false
+      this.connecting = false
+      console.error('WebSocket 连接异常', error)
     })
   }
 
   send(data) {
-    if (this.isConnected && this.socketTask) {
-      try {
-        this.socketTask.send({
-          data: JSON.stringify(data),
-          fail: (err) => {
-            console.error('WebSocket发送失败', err)
-          }
-        })
-      } catch (e) {
-        console.error('WebSocket发送异常', e)
-      }
-    } else {
-      console.warn('WebSocket未连接，无法发送:', data)
+    if (!this.isConnected || !this.socketTask) {
+      return
     }
+    this.socketTask.send({
+      data: JSON.stringify(data)
+    })
   }
 
   on(event, callback) {
@@ -85,16 +90,25 @@ class WebSocketClient {
   }
 
   off(event, callback) {
+    if (!this.listeners[event]) {
+      return
+    }
+    if (!callback) {
+      this.listeners[event] = []
+      return
+    }
+    this.listeners[event] = this.listeners[event].filter((current) => current !== callback)
+  }
+
+  emit(event, payload) {
     if (this.listeners[event]) {
-      this.listeners[event] = this.listeners[event].filter(cb => cb !== callback)
+      this.listeners[event].forEach((callback) => callback(payload))
     }
   }
 
   handleMessage(data) {
     const { event, payload } = data
-    if (this.listeners[event]) {
-      this.listeners[event].forEach(callback => callback(payload))
-    }
+    this.emit(event, payload)
   }
 
   startHeartbeat() {
@@ -111,23 +125,30 @@ class WebSocketClient {
     }
   }
 
+  reconnect(url) {
+    if (this.reconnectTimer) {
+      return
+    }
+    this.reconnectTimer = setTimeout(() => {
+      this.connect(url)
+      this.reconnectTimer = null
+    }, 5000)
+  }
+
   close() {
+    this.manualClose = true
     this.stopHeartbeat()
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
     if (this.socketTask) {
-      this.socketTask.close({
-        success: () => {
-          console.log('WebSocket已关闭')
-        }
-      })
+      this.socketTask.close()
       this.socketTask = null
     }
     this.isConnected = false
-    this.isConnecting = false
-    this.listeners = {}
+    this.connecting = false
+    this.currentUrl = ''
   }
 }
 

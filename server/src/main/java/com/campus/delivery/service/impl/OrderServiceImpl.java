@@ -269,7 +269,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         Rider rider = order.getRiderId() != null ? riderMapper.selectById(order.getRiderId()) : null;
         Address address = resolveAddressFromOrder(userId, order.getAddress());
 
-        return toDetailVo(order, merchant != null ? merchant.getName() : "", items, reviewed, rider, address);
+        return toDetailVo(order, merchant, items, reviewed, rider, address);
     }
 
     @Override
@@ -315,7 +315,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         enrichOrderItems(items);
 
         Rider rider = order.getRiderId() != null ? riderMapper.selectById(order.getRiderId()) : null;
-        return toDetailVo(order, "", items, false, rider, null);
+        return toDetailVo(order, null, items, false, rider, null);
     }
 
     @Override
@@ -1048,7 +1048,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     }
 
     private StudentOrderVO toDetailVo(Order order,
-                                      String merchantName,
+                                      Merchant merchant,
                                       List<OrderItem> items,
                                       boolean reviewed,
                                       Rider rider,
@@ -1058,7 +1058,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         vo.setOrderNo(order.getOrderNo());
         vo.setUserId(order.getUserId());
         vo.setMerchantId(order.getMerchantId());
-        vo.setMerchantName(merchantName);
+        vo.setMerchantName(merchant != null ? merchant.getName() : "");
+        vo.setMerchantAddress(merchant != null ? merchant.getAddress() : "");
         vo.setRiderId(order.getRiderId());
         vo.setDishPrice(order.getDishPrice());
         vo.setDeliveryFee(order.getDeliveryFee());
@@ -1075,14 +1076,25 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         vo.setReviewed(reviewed);
         vo.setDishes(toDishVos(items));
 
+        if (merchant != null) {
+            if (merchant.getLatitude() != null) {
+                vo.setMerchantLat(merchant.getLatitude().doubleValue());
+            }
+            if (merchant.getLongitude() != null) {
+                vo.setMerchantLng(merchant.getLongitude().doubleValue());
+            }
+        }
+
         if (rider != null) {
             vo.setRiderName(rider.getName());
             vo.setRiderPhone(rider.getPhone());
-            if (rider.getLatitude() != null) {
-                vo.setRiderLat(rider.getLatitude().doubleValue());
-            }
-            if (rider.getLongitude() != null) {
-                vo.setRiderLng(rider.getLongitude().doubleValue());
+            if ("delivering".equals(order.getStatus())) {
+                if (rider.getLatitude() != null) {
+                    vo.setRiderLat(rider.getLatitude().doubleValue());
+                }
+                if (rider.getLongitude() != null) {
+                    vo.setRiderLng(rider.getLongitude().doubleValue());
+                }
             }
         }
 

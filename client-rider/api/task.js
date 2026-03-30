@@ -42,6 +42,14 @@ export const getTaskDetail = (id) => {
   })
 }
 
+export const getTaskRoute = (id, params = {}) => {
+  return request({
+    url: `/rider/task/${id}/route`,
+    method: 'GET',
+    data: params
+  })
+}
+
 export const getHistory = () => {
   return request({
     url: '/rider/task/history',

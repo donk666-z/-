@@ -16,7 +16,11 @@ public class StudentOrderVO implements Serializable {
     private Long userId;
     private Long merchantId;
     private String merchantName;
+    private String merchantAddress;
     private Long riderId;
+
+    private Double merchantLat;
+    private Double merchantLng;
 
     private BigDecimal dishPrice;
     private BigDecimal deliveryFee;

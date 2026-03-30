@@ -54,6 +54,11 @@ wechat:
   appid: your_wx_appid
   secret: your_wx_secret
 
+tencent:
+  map:
+    key:
+    route-mode: ebicycling
+
 upload:
   path: /uploads/
   
