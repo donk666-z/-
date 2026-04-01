@@ -1,6 +1,6 @@
 import { handleUnauthorized } from '@/utils/session'
 
-const BASE_URL = 'http://localhost:8080/api'
+export const BASE_URL = 'http://localhost:8080/api'
 
 const request = (options) => {
   return new Promise((resolve, reject) => {
@@ -38,10 +38,16 @@ const request = (options) => {
 
         if (res.statusCode === 403) {
           const message = (res.data && res.data.message) || '暂无权限访问'
-          if (options.url && options.url.indexOf('/rider/') === 0 && token) {
-            uni.showToast({ title: '登录身份已失效，请重新登录', icon: 'none' })
+          const shouldKick = !!token && (
+            message.indexOf('禁用') >= 0 ||
+            message.indexOf('失效') >= 0 ||
+            message.indexOf('重新登录') >= 0 ||
+            (options.url && options.url.indexOf('/rider/') === 0)
+          )
+          if (shouldKick) {
+            uni.showToast({ title: message || '登录身份已失效，请重新登录', icon: 'none' })
             handleUnauthorized()
-            reject({ message: '登录身份已失效，请重新登录' })
+            reject({ message: message || '登录身份已失效，请重新登录' })
             return
           }
           uni.showToast({ title: message, icon: 'none' })

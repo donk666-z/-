@@ -25,8 +25,21 @@ public class AdminConfigController {
     public Result<Void> update(@PathVariable String key, @RequestBody SystemConfig config) {
         LambdaQueryWrapper<SystemConfig> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(SystemConfig::getConfigKey, key);
-        config.setConfigKey(key);
-        systemConfigMapper.update(config, wrapper);
+        SystemConfig existing = systemConfigMapper.selectOne(wrapper);
+        if (existing == null) {
+            SystemConfig created = new SystemConfig();
+            created.setConfigKey(key);
+            created.setConfigValue(config == null ? null : config.getConfigValue());
+            created.setDescription(config == null ? null : config.getDescription());
+            systemConfigMapper.insert(created);
+        } else {
+            SystemConfig updated = new SystemConfig();
+            updated.setId(existing.getId());
+            updated.setConfigKey(key);
+            updated.setConfigValue(config == null ? null : config.getConfigValue());
+            updated.setDescription(config == null ? existing.getDescription() : config.getDescription());
+            systemConfigMapper.updateById(updated);
+        }
         return Result.success("配置更新成功", null);
     }
 }

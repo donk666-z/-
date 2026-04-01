@@ -192,6 +192,27 @@ const midpoint = (pointA, pointB) => {
   return pointA || pointB || { latitude: 0, longitude: 0 }
 }
 
+const ROUTE_OFFTRACK_TRIGGER_METERS = 120
+const AUTO_REROUTE_COOLDOWN_MS = 120000
+
+const toRadians = (value) => (value * Math.PI) / 180
+
+const distanceBetween = (pointA, pointB) => {
+  if (!pointA || !pointB) {
+    return Number.POSITIVE_INFINITY
+  }
+  const earthRadius = 6371000
+  const lat1 = toRadians(pointA.latitude)
+  const lat2 = toRadians(pointB.latitude)
+  const deltaLat = lat2 - lat1
+  const deltaLng = toRadians(pointB.longitude - pointA.longitude)
+  const sinLat = Math.sin(deltaLat / 2)
+  const sinLng = Math.sin(deltaLng / 2)
+  const a = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLng * sinLng
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return earthRadius * c
+}
+
 export default {
   data() {
     return {
@@ -202,9 +223,9 @@ export default {
       loading: false,
       routeLoading: false,
       locationTimer: null,
-      routeTimer: null,
       statusTimer: null,
-      lastRouteRefreshAt: 0
+      lastRouteRefreshAt: 0,
+      lastAutoRerouteAt: 0
     }
   },
   computed: {
@@ -414,7 +435,6 @@ export default {
   },
   onUnload() {
     this.stopLocationReport()
-    this.stopRouteRefresh()
     this.stopStatusPolling()
   },
   methods: {
@@ -477,7 +497,6 @@ export default {
     async syncRuntime(previousStatus, forceRoute) {
       if (this.canDeliver) {
         this.startLocationReport()
-        this.startRouteRefresh()
         this.stopStatusPolling()
         if (forceRoute || previousStatus !== 'delivering' || !this.routePlan || this.routePlan.sourceType !== 'current') {
           await this.refreshCurrentRoute(true)
@@ -486,7 +505,6 @@ export default {
       }
 
       this.stopLocationReport()
-      this.stopRouteRefresh()
 
       if (this.waitingPrepare) {
         this.startStatusPolling()
@@ -513,6 +531,38 @@ export default {
       } finally {
         this.routeLoading = false
       }
+    },
+    nearestRouteDistanceMeters(point) {
+      if (!point || this.routePoints.length === 0) {
+        return Number.POSITIVE_INFINITY
+      }
+      let minDistance = Number.POSITIVE_INFINITY
+      this.routePoints.forEach((routePoint) => {
+        const distance = distanceBetween(point, routePoint)
+        if (distance < minDistance) {
+          minDistance = distance
+        }
+      })
+      return minDistance
+    },
+    async maybeTriggerAutoReroute(point) {
+      if (!this.canDeliver || this.routeLoading) {
+        return
+      }
+      if (!this.routePlan || !this.routePlan.smart || this.routePoints.length < 2) {
+        return
+      }
+      if (Date.now() - this.lastAutoRerouteAt < AUTO_REROUTE_COOLDOWN_MS) {
+        return
+      }
+
+      const minDistance = this.nearestRouteDistanceMeters(point)
+      if (!Number.isFinite(minDistance) || minDistance < ROUTE_OFFTRACK_TRIGGER_METERS) {
+        return
+      }
+
+      this.lastAutoRerouteAt = Date.now()
+      await this.refreshCurrentRoute(true)
     },
     captureLocation() {
       return new Promise((resolve) => {
@@ -543,6 +593,7 @@ export default {
       } catch (error) {
         console.error(error)
       }
+      this.maybeTriggerAutoReroute(point)
       return point
     },
     async refreshCurrentRoute(force = false) {
@@ -600,7 +651,6 @@ export default {
         await deliverTask(this.taskId)
         uni.showToast({ title: '已确认送达', icon: 'none' })
         this.stopLocationReport()
-        this.stopRouteRefresh()
         this.$store.commit('SET_CURRENT_TASK', null)
         setTimeout(() => {
           uni.navigateBack()
@@ -642,20 +692,6 @@ export default {
       if (this.locationTimer) {
         clearInterval(this.locationTimer)
         this.locationTimer = null
-      }
-    },
-    startRouteRefresh() {
-      if (this.routeTimer) {
-        return
-      }
-      this.routeTimer = setInterval(() => {
-        this.refreshCurrentRoute()
-      }, 60000)
-    },
-    stopRouteRefresh() {
-      if (this.routeTimer) {
-        clearInterval(this.routeTimer)
-        this.routeTimer = null
       }
     },
     startStatusPolling() {

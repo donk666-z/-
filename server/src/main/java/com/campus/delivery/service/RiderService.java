@@ -17,6 +17,8 @@ public interface RiderService {
 
     RiderRouteVO getRoutePlan(Long orderId, Long riderId, Double fromLat, Double fromLng);
 
+    RiderRouteVO getStudentRoutePlan(Long orderId, Long userId);
+
     List<RiderTaskVO> getHistoryOrders(Long riderId);
 
     void grabOrder(Long orderId, Long riderId);

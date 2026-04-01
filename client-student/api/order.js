@@ -23,6 +23,13 @@ export const getOrderDetail = (id) => {
   })
 }
 
+export const getOrderRoute = (id) => {
+  return request({
+    url: `/student/order/${id}/route`,
+    method: 'GET'
+  })
+}
+
 export const cancelOrder = (id) => {
   return request({
     url: `/student/order/${id}/cancel`,

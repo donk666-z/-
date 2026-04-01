@@ -26,4 +26,14 @@ public class OrderRealtimeNotifierImpl implements OrderRealtimeNotifier {
     public void notifyMerchantNewOrder(Order order) {
         orderTrackingWebSocketHandler.broadcastMerchantNewOrder(order);
     }
+
+    @Override
+    public void notifyRiderOrdersUpdated(String reason) {
+        orderTrackingWebSocketHandler.broadcastRiderOrdersUpdated(reason);
+    }
+
+    @Override
+    public void notifyRiderAssigned(Long riderId, Long orderId, String message) {
+        orderTrackingWebSocketHandler.broadcastRiderAssigned(riderId, orderId, message);
+    }
 }

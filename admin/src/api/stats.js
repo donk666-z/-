@@ -1,5 +1,5 @@
 import request from './request'
 
 export function getOverview() {
-  return request.get('/stats/overview')
+  return request.get('/admin/stats/overview')
 }

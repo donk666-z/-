@@ -30,6 +30,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -46,6 +48,7 @@ import java.util.stream.Collectors;
 
 @Service
 public class RiderServiceImpl implements RiderService {
+    private static final Logger log = LoggerFactory.getLogger(RiderServiceImpl.class);
 
     @Autowired
     private OrderMapper orderMapper;
@@ -85,9 +88,34 @@ public class RiderServiceImpl implements RiderService {
         wrapper.in(Order::getStatus, Arrays.asList("accepted", "prepared"))
                 .isNull(Order::getRiderId)
                 .orderByAsc(Order::getCreatedAt);
-        return orderMapper.selectList(wrapper).stream()
+        List<RiderTaskVO> tasks = orderMapper.selectList(wrapper).stream()
                 .map(order -> buildTaskVO(order, rider))
                 .collect(Collectors.toList());
+
+        RoutePointVO riderPoint = buildPoint(toDouble(rider.getLatitude()), toDouble(rider.getLongitude()));
+        int nearbyRadiusMeters = resolveNearbyRadiusMeters();
+        if (riderPoint == null) {
+            return tasks;
+        }
+
+        List<RiderTaskVO> nearbyTasks = new ArrayList<>();
+        for (RiderTaskVO task : tasks) {
+            RoutePointVO merchantPoint = buildPoint(task.getMerchantLatitude(), task.getMerchantLongitude());
+            if (merchantPoint == null) {
+                continue;
+            }
+            int distanceMeters = estimateDistance(riderPoint, merchantPoint);
+            if (distanceMeters > nearbyRadiusMeters) {
+                continue;
+            }
+            task.setDistance(roundDistanceKm(distanceMeters));
+            nearbyTasks.add(task);
+        }
+        nearbyTasks.sort((a, b) -> Double.compare(
+                a.getDistance() == null ? Double.MAX_VALUE : a.getDistance(),
+                b.getDistance() == null ? Double.MAX_VALUE : b.getDistance()
+        ));
+        return nearbyTasks;
     }
 
     @Override
@@ -127,16 +155,79 @@ public class RiderServiceImpl implements RiderService {
             return buildUnavailableRoute(task, origin);
         }
 
+        String mapKey = resolveTencentMapKey();
+        String fallbackNote = buildFallbackNote(StringUtils.hasText(mapKey), null);
         try {
-            RiderRouteVO smartRoute = requestTencentRoute(origin, task, destination);
+            RiderRouteVO smartRoute = requestTencentRoute(origin, task, destination, mapKey);
             if (smartRoute != null) {
                 return smartRoute;
             }
-        } catch (Exception ignored) {
+            fallbackNote = buildFallbackNote(StringUtils.hasText(mapKey), "腾讯算路未返回有效路线");
+        } catch (Exception ex) {
             // Fall back to direct estimation when Tencent route planning is unavailable.
+            log.warn("Tencent route planning failed for orderId={}, riderId={}: {}", orderId, riderId, ex.getMessage());
+            fallbackNote = buildFallbackNote(StringUtils.hasText(mapKey), ex.getMessage());
         }
 
-        return buildFallbackRoute(origin, task, destination);
+        return buildFallbackRoute(origin, task, destination, fallbackNote);
+    }
+
+    @Override
+    public RiderRouteVO getStudentRoutePlan(Long orderId, Long userId) {
+        Order order = orderMapper.selectById(orderId);
+        if (order == null) {
+            throw new BusinessException(404, "Order not found");
+        }
+        if (!Objects.equals(order.getUserId(), userId)) {
+            throw new BusinessException(403, "No permission to access this order");
+        }
+
+        RiderTaskVO task = buildTaskVO(order, null);
+        RoutePointVO destination = buildPoint(task.getDeliveryLatitude(), task.getDeliveryLongitude());
+
+        RouteOrigin origin = new RouteOrigin();
+        origin.sourceType = "merchant";
+        origin.label = StringUtils.hasText(task.getMerchantName()) ? task.getMerchantName() : "Merchant";
+
+        if ("delivering".equals(order.getStatus())) {
+            RoutePointVO realtimeRiderPoint = resolveRealtimeRiderPoint(orderId);
+            if (realtimeRiderPoint != null) {
+                origin.point = realtimeRiderPoint;
+                origin.sourceType = "current";
+                origin.label = "Current Location";
+            } else if (order.getRiderId() != null) {
+                Rider rider = riderMapper.selectById(order.getRiderId());
+                RoutePointVO riderPoint = rider == null ? null : buildPoint(toDouble(rider.getLatitude()), toDouble(rider.getLongitude()));
+                if (riderPoint != null) {
+                    origin.point = riderPoint;
+                    origin.sourceType = "current";
+                    origin.label = "Current Location";
+                }
+            }
+        }
+
+        if (origin.point == null) {
+            origin.point = buildPoint(task.getMerchantLatitude(), task.getMerchantLongitude());
+        }
+
+        if (origin.point == null || destination == null) {
+            return buildUnavailableRoute(task, origin);
+        }
+
+        String mapKey = resolveTencentMapKey();
+        String fallbackNote = buildFallbackNote(StringUtils.hasText(mapKey), null);
+        try {
+            RiderRouteVO smartRoute = requestTencentRoute(origin, task, destination, mapKey);
+            if (smartRoute != null) {
+                return smartRoute;
+            }
+            fallbackNote = buildFallbackNote(StringUtils.hasText(mapKey), "腾讯算路未返回有效路线");
+        } catch (Exception ex) {
+            log.warn("Tencent route planning failed for student orderId={}, userId={}: {}", orderId, userId, ex.getMessage());
+            fallbackNote = buildFallbackNote(StringUtils.hasText(mapKey), ex.getMessage());
+        }
+
+        return buildFallbackRoute(origin, task, destination, fallbackNote);
     }
 
     @Override
@@ -178,6 +269,7 @@ public class RiderServiceImpl implements RiderService {
 
         order.setRiderId(riderId);
         orderMapper.updateById(order);
+        orderRealtimeNotifier.notifyRiderOrdersUpdated("grabbed");
     }
 
     @Override
@@ -328,8 +420,7 @@ public class RiderServiceImpl implements RiderService {
         return origin;
     }
 
-    private RiderRouteVO requestTencentRoute(RouteOrigin origin, RiderTaskVO task, RoutePointVO destination) {
-        String mapKey = resolveTencentMapKey();
+    private RiderRouteVO requestTencentRoute(RouteOrigin origin, RiderTaskVO task, RoutePointVO destination, String mapKey) {
         if (!StringUtils.hasText(mapKey)) {
             return null;
         }
@@ -347,7 +438,7 @@ public class RiderServiceImpl implements RiderService {
 
         JSONObject resultObject = JSONUtil.parseObj(response);
         if (resultObject.getInt("status", -1) != 0) {
-            return null;
+            throw new RuntimeException("腾讯路线接口返回异常: " + resultObject.getStr("message", "未知错误"));
         }
 
         JSONObject result = resultObject.getJSONObject("result");
@@ -357,7 +448,7 @@ public class RiderServiceImpl implements RiderService {
 
         JSONArray routes = result.getJSONArray("routes");
         if (routes == null || routes.isEmpty()) {
-            return null;
+            throw new RuntimeException("腾讯路线接口未返回 routes");
         }
 
         JSONObject route = routes.getJSONObject(0);
@@ -365,12 +456,12 @@ public class RiderServiceImpl implements RiderService {
         routeVO.setAvailable(true);
         routeVO.setSmart(true);
         routeVO.setProvider("tencent");
-        routeVO.setMode(route.getStr("mode"));
+        routeVO.setMode(normalizeRouteMode(route.getStr("mode")).toUpperCase());
         routeVO.setDistanceMeters(route.getInt("distance", estimateDistance(origin.point, destination)));
-        routeVO.setDurationMinutes(route.getInt("duration", estimateDurationMinutes(routeVO.getDistanceMeters())));
+        routeVO.setDurationMinutes(normalizeDurationMinutes(route.getInt("duration"), routeVO.getDistanceMeters()));
         routeVO.setEtaText(buildEtaText(routeVO.getDurationMinutes()));
         routeVO.setNote("Tencent e-bike route planning enabled");
-        routeVO.setPoints(decodePolyline(route.getJSONArray("polyline")));
+        routeVO.setPoints(buildRoutePoints(route, origin.point, destination));
         routeVO.setSteps(parseSteps(route.getJSONArray("steps")));
 
         if (routeVO.getPoints().isEmpty()) {
@@ -379,7 +470,7 @@ public class RiderServiceImpl implements RiderService {
         return routeVO;
     }
 
-    private RiderRouteVO buildFallbackRoute(RouteOrigin origin, RiderTaskVO task, RoutePointVO destination) {
+    private RiderRouteVO buildFallbackRoute(RouteOrigin origin, RiderTaskVO task, RoutePointVO destination, String note) {
         RiderRouteVO routeVO = createRouteSkeleton(origin, task);
         int distance = estimateDistance(origin.point, destination);
         int duration = estimateDurationMinutes(distance);
@@ -391,7 +482,7 @@ public class RiderServiceImpl implements RiderService {
         routeVO.setDistanceMeters(distance);
         routeVO.setDurationMinutes(duration);
         routeVO.setEtaText(buildEtaText(duration));
-        routeVO.setNote(buildFallbackNote());
+        routeVO.setNote(StringUtils.hasText(note) ? note : buildFallbackNote(false, null));
         routeVO.setPoints(Arrays.asList(origin.point, destination));
 
         RouteStepVO step = new RouteStepVO();
@@ -431,7 +522,11 @@ public class RiderServiceImpl implements RiderService {
             if (item == null) {
                 continue;
             }
-            values.add(Double.parseDouble(item.toString()));
+            try {
+                values.add(Double.parseDouble(item.toString()));
+            } catch (NumberFormatException ignored) {
+                return Collections.emptyList();
+            }
         }
 
         if (values.size() < 2) {
@@ -450,6 +545,108 @@ public class RiderServiceImpl implements RiderService {
             }
         }
         return points;
+    }
+
+    private List<RoutePointVO> buildRoutePoints(JSONObject route, RoutePointVO origin, RoutePointVO destination) {
+        List<RoutePointVO> points = decodePolyline(route.getJSONArray("polyline"));
+        if (points.size() > 1) {
+            return points;
+        }
+
+        List<RoutePointVO> stepPolylinePoints = decodeStepPolylines(route.getJSONArray("steps"));
+        if (stepPolylinePoints.size() > 1) {
+            return stepPolylinePoints;
+        }
+
+        List<RoutePointVO> stepEndpoints = collectStepEndpoints(route.getJSONArray("steps"));
+        if (stepEndpoints.size() > 1) {
+            return stepEndpoints;
+        }
+
+        return Arrays.asList(origin, destination);
+    }
+
+    private List<RoutePointVO> decodeStepPolylines(JSONArray steps) {
+        if (steps == null || steps.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<RoutePointVO> merged = new ArrayList<>();
+        for (Object item : steps) {
+            if (!(item instanceof JSONObject)) {
+                continue;
+            }
+            JSONObject step = (JSONObject) item;
+            List<RoutePointVO> stepPoints = decodePolyline(step.getJSONArray("polyline"));
+            if (stepPoints.isEmpty()) {
+                continue;
+            }
+            appendWithoutDuplicate(merged, stepPoints);
+        }
+        return merged;
+    }
+
+    private List<RoutePointVO> collectStepEndpoints(JSONArray steps) {
+        if (steps == null || steps.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<RoutePointVO> points = new ArrayList<>();
+        for (Object item : steps) {
+            if (!(item instanceof JSONObject)) {
+                continue;
+            }
+            JSONObject step = (JSONObject) item;
+            appendLocationIfPresent(points, step.getJSONObject("start_location"));
+            appendLocationIfPresent(points, step.getJSONObject("end_location"));
+        }
+        return points;
+    }
+
+    private void appendLocationIfPresent(List<RoutePointVO> points, JSONObject location) {
+        if (location == null) {
+            return;
+        }
+        RoutePointVO point = buildPoint(location.getDouble("lat"), location.getDouble("lng"));
+        if (point == null) {
+            return;
+        }
+        if (points.isEmpty() || !isSamePoint(points.get(points.size() - 1), point)) {
+            points.add(point);
+        }
+    }
+
+    private void appendWithoutDuplicate(List<RoutePointVO> target, List<RoutePointVO> source) {
+        if (source == null || source.isEmpty()) {
+            return;
+        }
+        if (target.isEmpty()) {
+            target.addAll(source);
+            return;
+        }
+
+        int start = 0;
+        if (isSamePoint(target.get(target.size() - 1), source.get(0))) {
+            start = 1;
+        }
+        for (int i = start; i < source.size(); i++) {
+            target.add(source.get(i));
+        }
+    }
+
+    private boolean isSamePoint(RoutePointVO a, RoutePointVO b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        return Objects.equals(a.getLatitude(), b.getLatitude()) && Objects.equals(a.getLongitude(), b.getLongitude());
+    }
+
+    private Integer normalizeDurationMinutes(Integer duration, Integer fallbackDistanceMeters) {
+        if (duration == null || duration <= 0) {
+            return estimateDurationMinutes(fallbackDistanceMeters);
+        }
+        // Tencent duration is returned in seconds.
+        return Math.max(1, (int) Math.ceil(duration / 60d));
     }
 
     private List<RouteStepVO> parseSteps(JSONArray steps) {
@@ -479,8 +676,19 @@ public class RiderServiceImpl implements RiderService {
             return tencentMapKey.trim();
         }
 
+        String envKey = System.getenv("TENCENT_MAP_KEY");
+        if (StringUtils.hasText(envKey)) {
+            return envKey.trim();
+        }
+
         LambdaQueryWrapper<SystemConfig> wrapper = new LambdaQueryWrapper<>();
-        wrapper.in(SystemConfig::getConfigKey, Arrays.asList("tencent_map_key", "qq_map_key", "tx_map_key"));
+        wrapper.in(SystemConfig::getConfigKey, Arrays.asList(
+                "tencent_map_key",
+                "qq_map_key",
+                "tx_map_key",
+                "tencent.map.key",
+                "tencentMapKey"
+        ));
         return systemConfigMapper.selectList(wrapper).stream()
                 .map(SystemConfig::getConfigValue)
                 .filter(StringUtils::hasText)
@@ -500,6 +708,23 @@ public class RiderServiceImpl implements RiderService {
         return defaultRouteMode;
     }
 
+    private int resolveNearbyRadiusMeters() {
+        int defaultRadius = 5000;
+        LambdaQueryWrapper<SystemConfig> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(SystemConfig::getConfigKey, "rider_nearby_radius_m")
+                .last("limit 1");
+        SystemConfig radiusConfig = systemConfigMapper.selectOne(wrapper);
+        if (radiusConfig == null || !StringUtils.hasText(radiusConfig.getConfigValue())) {
+            return defaultRadius;
+        }
+        try {
+            int configured = Integer.parseInt(radiusConfig.getConfigValue().trim());
+            return configured > 0 ? configured : defaultRadius;
+        } catch (Exception ignored) {
+            return defaultRadius;
+        }
+    }
+
     private String normalizeRouteMode(String routeMode) {
         String normalized = routeMode == null ? "" : routeMode.trim().toLowerCase();
         if ("bicycling".equals(normalized) || "driving".equals(normalized) || "walking".equals(normalized)) {
@@ -510,6 +735,25 @@ public class RiderServiceImpl implements RiderService {
 
     private String formatPoint(RoutePointVO point) {
         return String.format("%.6f,%.6f", point.getLatitude(), point.getLongitude());
+    }
+
+    @SuppressWarnings("unchecked")
+    private RoutePointVO resolveRealtimeRiderPoint(Long orderId) {
+        try {
+            Object raw = redisTemplate.opsForValue().get("rider:location:" + orderId);
+            if (!(raw instanceof Map)) {
+                return null;
+            }
+            Map<String, Object> location = (Map<String, Object>) raw;
+            Object latitude = location.get("latitude");
+            Object longitude = location.get("longitude");
+            if (!(latitude instanceof Number) || !(longitude instanceof Number)) {
+                return null;
+            }
+            return buildPoint(((Number) latitude).doubleValue(), ((Number) longitude).doubleValue());
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private RoutePointVO buildPoint(Double latitude, Double longitude) {
@@ -539,6 +783,12 @@ public class RiderServiceImpl implements RiderService {
         return Math.max(1, (int) Math.round(earthRadius * c));
     }
 
+    private Double roundDistanceKm(int distanceMeters) {
+        return BigDecimal.valueOf(distanceMeters / 1000d)
+                .setScale(1, RoundingMode.HALF_UP)
+                .doubleValue();
+    }
+
     private int estimateDurationMinutes(Integer distanceMeters) {
         int distance = distanceMeters == null ? 0 : distanceMeters;
         if (distance <= 0) {
@@ -550,16 +800,19 @@ public class RiderServiceImpl implements RiderService {
     private String buildEtaText(Integer durationMinutes) {
         int duration = durationMinutes == null ? 0 : durationMinutes;
         if (duration <= 0) {
-            return "about 1 min";
+            return "约1分钟";
         }
-        return "about " + duration + " min";
+        return "约" + duration + "分钟";
     }
 
-    private String buildFallbackNote() {
-        if (StringUtils.hasText(resolveTencentMapKey())) {
-            return "Smart route failed, switched to direct estimate";
+    private String buildFallbackNote(boolean hasMapKey, String detail) {
+        if (!hasMapKey) {
+            return "未配置腾讯地图 Key，已切换为直线预估路线";
         }
-        return "tencent_map_key is not configured, using direct estimate";
+        if (!StringUtils.hasText(detail)) {
+            return "腾讯算路暂时不可用，已切换为直线预估路线";
+        }
+        return "腾讯算路失败（" + detail + "），已切换为直线预估路线";
     }
 
     private Address resolveAddress(Long userId, String orderAddressLine) {
@@ -603,7 +856,7 @@ public class RiderServiceImpl implements RiderService {
         if (minutes == null || minutes <= 0) {
             return null;
         }
-        return "about " + minutes + " min";
+        return "预计" + minutes + "分钟";
     }
 
     private Rider ensureRider(Long riderId) {

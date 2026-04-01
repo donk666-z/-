@@ -1,9 +1,9 @@
 import request from './request'
 
 export function getConfigList() {
-  return request.get('/config')
+  return request.get('/admin/config/list')
 }
 
-export function updateConfig(data) {
-  return request.put('/config', data)
+export function updateConfig(key, data) {
+  return request.put(`/admin/config/${key}`, data)
 }

@@ -1,6 +1,7 @@
 package com.campus.delivery.service.impl;
 
 import cn.hutool.core.util.IdUtil;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.campus.delivery.dto.CreateOrderDTO;
@@ -14,6 +15,7 @@ import com.campus.delivery.entity.Review;
 import com.campus.delivery.entity.Rider;
 import com.campus.delivery.entity.SystemConfig;
 import com.campus.delivery.entity.Transaction;
+import com.campus.delivery.entity.User;
 import com.campus.delivery.exception.BusinessException;
 import com.campus.delivery.mapper.OrderItemMapper;
 import com.campus.delivery.mapper.OrderMapper;
@@ -399,6 +401,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         order.setStatus("accepted");
         updateById(order);
         orderRealtimeNotifier.notifyOrderStatus(id, "accepted", null);
+        trySmartDispatch(id);
+        orderRealtimeNotifier.notifyRiderOrdersUpdated("accepted");
     }
 
     @Override
@@ -415,6 +419,70 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         order.setStatus("prepared");
         updateById(order);
         orderRealtimeNotifier.notifyOrderStatus(id, "prepared", null);
+        trySmartDispatch(id);
+        orderRealtimeNotifier.notifyRiderOrdersUpdated("prepared");
+    }
+
+    private void trySmartDispatch(Long orderId) {
+        if (orderId == null || !resolveBooleanConfig("smart_dispatch_enabled", true)) {
+            return;
+        }
+
+        Order order = getById(orderId);
+        if (order == null || order.getRiderId() != null) {
+            return;
+        }
+        if (!Arrays.asList("accepted", "prepared").contains(order.getStatus())) {
+            return;
+        }
+
+        LambdaQueryWrapper<Rider> riderWrapper = new LambdaQueryWrapper<>();
+        riderWrapper.eq(Rider::getStatus, "online");
+        List<Rider> onlineRiders = riderMapper.selectList(riderWrapper);
+        if (onlineRiders == null || onlineRiders.isEmpty()) {
+            return;
+        }
+
+        Set<Long> onlineRiderIds = onlineRiders.stream()
+                .map(Rider::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (onlineRiderIds.isEmpty()) {
+            return;
+        }
+
+        LambdaQueryWrapper<Order> activeOrderWrapper = new LambdaQueryWrapper<>();
+        activeOrderWrapper.in(Order::getRiderId, onlineRiderIds)
+                .in(Order::getStatus, Arrays.asList("accepted", "prepared", "delivering"));
+        Set<Long> busyRiderIds = list(activeOrderWrapper).stream()
+                .map(Order::getRiderId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        List<Rider> candidates = onlineRiders.stream()
+                .filter(rider -> rider.getId() != null && !busyRiderIds.contains(rider.getId()))
+                .collect(Collectors.toList());
+        if (candidates.isEmpty()) {
+            return;
+        }
+
+        Rider selected = selectBestRider(order, candidates);
+        if (selected == null || selected.getId() == null) {
+            return;
+        }
+
+        LambdaUpdateWrapper<Order> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(Order::getId, orderId)
+                .isNull(Order::getRiderId)
+                .in(Order::getStatus, Arrays.asList("accepted", "prepared"))
+                .set(Order::getRiderId, selected.getId());
+        int changed = baseMapper.update(new Order(), updateWrapper);
+        if (changed <= 0) {
+            return;
+        }
+
+        orderRealtimeNotifier.notifyRiderAssigned(selected.getId(), orderId, "系统已为你分配新订单");
+        orderRealtimeNotifier.notifyRiderOrdersUpdated("assigned");
     }
 
     @Override
@@ -440,7 +508,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         rider.setId(riderId);
         rider.setStatus("delivering");
         riderMapper.updateById(rider);
-        String eta = "约 " + DEFAULT_DELIVER_MINUTES + " 分钟";
+        String eta = "预计" + DEFAULT_DELIVER_MINUTES + "分钟";
         orderRealtimeNotifier.notifyOrderStatus(id, "delivering", eta);
     }
 
@@ -556,9 +624,33 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 .ge(Order::getCreatedAt, todayStart);
         List<Order> todayCompleted = list(completedWrapper);
         BigDecimal todayRevenue = todayCompleted.stream()
-                .map(Order::getTotalPrice)
+                .map(Order::getDishPrice)
+                .filter(Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         stats.put("todayRevenue", todayRevenue);
+        stats.put("todayIncome", todayRevenue);
+
+        LambdaQueryWrapper<User> userWrapper = new LambdaQueryWrapper<>();
+        userWrapper.eq(User::getRole, "student");
+        stats.put("totalUsers", userService.count(userWrapper));
+        stats.put("totalMerchants", merchantService.count());
+        stats.put("totalRiders", riderMapper.selectCount(new LambdaQueryWrapper<>()));
+
+        LambdaQueryWrapper<Order> processingWrapper = new LambdaQueryWrapper<>();
+        processingWrapper.in(Order::getStatus, Arrays.asList("paid", "accepted", "prepared", "delivering"));
+        stats.put("processingOrders", count(processingWrapper));
+
+        LambdaQueryWrapper<Transaction> transactionWrapper = new LambdaQueryWrapper<>();
+        transactionWrapper.eq(Transaction::getStatus, "completed");
+        BigDecimal totalIncome = transactionMapper.selectList(transactionWrapper).stream()
+                .map(Transaction::getAmount)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        stats.put("totalIncome", totalIncome);
+
+        LambdaQueryWrapper<Transaction> pendingTxWrapper = new LambdaQueryWrapper<>();
+        pendingTxWrapper.eq(Transaction::getStatus, "pending");
+        stats.put("pendingSettlementCount", transactionMapper.selectCount(pendingTxWrapper));
 
         return stats;
     }
@@ -1135,7 +1227,96 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         if (minutes == null || minutes <= 0) {
             return null;
         }
-        return "约 " + minutes + " 分钟";
+        return "预计" + minutes + "分钟";
+    }
+
+    private Rider selectBestRider(Order order, List<Rider> candidates) {
+        Merchant merchant = order.getMerchantId() == null ? null : merchantService.getById(order.getMerchantId());
+        RouteCoordinate merchantCoordinate = routeCoordinateOf(merchant == null ? null : merchant.getLatitude(),
+                merchant == null ? null : merchant.getLongitude());
+        int maxDistanceMeters = resolveIntConfig("smart_dispatch_max_distance_m", 3000);
+
+        Rider bestByDistance = null;
+        int bestDistance = Integer.MAX_VALUE;
+        if (merchantCoordinate != null) {
+            for (Rider rider : candidates) {
+                RouteCoordinate riderCoordinate = routeCoordinateOf(rider.getLatitude(), rider.getLongitude());
+                if (riderCoordinate == null) {
+                    continue;
+                }
+                int distance = estimateDistanceMeters(riderCoordinate, merchantCoordinate);
+                if (distance > maxDistanceMeters) {
+                    continue;
+                }
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestByDistance = rider;
+                }
+            }
+        }
+        if (bestByDistance != null) {
+            return bestByDistance;
+        }
+
+        candidates.sort(Comparator
+                .comparing(Rider::getUpdatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(Rider::getId));
+        return candidates.get(0);
+    }
+
+    private int resolveIntConfig(String key, int defaultValue) {
+        String value = getConfigValue(key);
+        if (!StringUtils.hasText(value)) {
+            return defaultValue;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (Exception ignored) {
+            return defaultValue;
+        }
+    }
+
+    private boolean resolveBooleanConfig(String key, boolean defaultValue) {
+        String value = getConfigValue(key);
+        if (!StringUtils.hasText(value)) {
+            return defaultValue;
+        }
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        if ("true".equals(normalized) || "1".equals(normalized) || "yes".equals(normalized) || "on".equals(normalized)) {
+            return true;
+        }
+        if ("false".equals(normalized) || "0".equals(normalized) || "no".equals(normalized) || "off".equals(normalized)) {
+            return false;
+        }
+        return defaultValue;
+    }
+
+    private String getConfigValue(String key) {
+        if (!StringUtils.hasText(key)) {
+            return null;
+        }
+        LambdaQueryWrapper<SystemConfig> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(SystemConfig::getConfigKey, key).last("limit 1");
+        SystemConfig config = systemConfigMapper.selectOne(wrapper);
+        return config == null ? null : config.getConfigValue();
+    }
+
+    private RouteCoordinate routeCoordinateOf(BigDecimal latitude, BigDecimal longitude) {
+        if (latitude == null || longitude == null) {
+            return null;
+        }
+        return new RouteCoordinate(latitude.doubleValue(), longitude.doubleValue());
+    }
+
+    private int estimateDistanceMeters(RouteCoordinate start, RouteCoordinate end) {
+        final double earthRadius = 6371000d;
+        double latDistance = Math.toRadians(end.latitude - start.latitude);
+        double lngDistance = Math.toRadians(end.longitude - start.longitude);
+        double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
+                + Math.cos(Math.toRadians(start.latitude)) * Math.cos(Math.toRadians(end.latitude))
+                * Math.sin(lngDistance / 2) * Math.sin(lngDistance / 2);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return (int) Math.round(earthRadius * c);
     }
 
     private String normalizeMerchantStatus(String status) {
@@ -1414,6 +1595,16 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                 return;
             }
             revenue = revenue.add(unitPrice.multiply(BigDecimal.valueOf(quantity)));
+        }
+    }
+
+    private static class RouteCoordinate {
+        private final double latitude;
+        private final double longitude;
+
+        private RouteCoordinate(double latitude, double longitude) {
+            this.latitude = latitude;
+            this.longitude = longitude;
         }
     }
 }

@@ -9,6 +9,8 @@ import OrderList from '../views/order/OrderList.vue'
 import MerchantList from '../views/merchant/MerchantList.vue'
 import CouponList from '../views/coupon/CouponList.vue'
 import SystemConfig from '../views/config/SystemConfig.vue'
+import FinanceList from '../views/finance/FinanceList.vue'
+import ComplaintList from '../views/complaint/ComplaintList.vue'
 
 const routes = [
   { path: '/login', component: Login },
@@ -21,6 +23,8 @@ const routes = [
       { path: 'user', component: UserList },
       { path: 'order', component: OrderList },
       { path: 'merchant', component: MerchantList },
+      { path: 'finance', component: FinanceList },
+      { path: 'complaint', component: ComplaintList },
       { path: 'coupon', component: CouponList },
       { path: 'config', component: SystemConfig }
     ]

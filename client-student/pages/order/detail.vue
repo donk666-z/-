@@ -110,7 +110,7 @@
 </template>
 
 <script>
-import { getOrderDetail, cancelOrder, confirmOrder } from '@/api/order'
+import { getOrderDetail, getOrderRoute, cancelOrder, confirmOrder } from '@/api/order'
 import StudentTabBarOverlay from '@/components/StudentTabBarOverlay.vue'
 import websocket from '@/utils/websocket'
 import { BASE_URL } from '@/utils/request'
@@ -212,6 +212,8 @@ export default {
       order: {
         dishes: []
       },
+      routePlan: null,
+      lastRouteRefreshAt: 0,
       orderStatusHandler: null,
       riderLocationHandler: null,
       socketOpenHandler: null,
@@ -234,8 +236,14 @@ export default {
       }
       return toPoint(this.order.riderLat, this.order.riderLng)
     },
+    routePoints() {
+      const points = Array.isArray(this.routePlan && this.routePlan.points) ? this.routePlan.points : []
+      return points
+        .map((point) => toPoint(point.latitude, point.longitude))
+        .filter(Boolean)
+    },
     hasMapData() {
-      return !!(this.addressPoint || this.merchantPoint || this.riderPoint)
+      return this.routePoints.length > 1 || !!(this.addressPoint || this.merchantPoint || this.riderPoint)
     },
     activeStep() {
       if (this.order.status === 'prepared') {
@@ -268,6 +276,9 @@ export default {
       })
     },
     mapCenter() {
+      if (this.routePoints.length > 1) {
+        return midpoint(this.routePoints[0], this.routePoints[this.routePoints.length - 1])
+      }
       if (this.riderPoint && this.addressPoint) {
         return midpoint(this.riderPoint, this.addressPoint)
       }
@@ -298,6 +309,16 @@ export default {
       return markers
     },
     mapPolylines() {
+      if (this.routePoints.length > 1) {
+        return [
+          {
+            points: this.routePoints,
+            color: '#FF6B00',
+            width: 8,
+            arrowLine: this.order.status === 'delivering'
+          }
+        ]
+      }
       const polylines = []
       if (this.merchantPoint && this.addressPoint) {
         polylines.push({
@@ -318,6 +339,9 @@ export default {
       return polylines
     },
     mapSummary() {
+      if (this.routePlan && this.routePlan.etaText) {
+        return this.routePlan.etaText
+      }
       if (this.order.status === 'delivering' && this.order.estimatedTime) {
         return `送达预估 ${this.order.estimatedTime}`
       }
@@ -358,10 +382,40 @@ export default {
     this.teardownRealtime()
   },
   methods: {
+    normalizeRoute(route) {
+      if (!route) {
+        return null
+      }
+      return {
+        ...route,
+        smart: !!route.smart,
+        points: Array.isArray(route.points) ? route.points : []
+      }
+    },
+    shouldRequestRoute() {
+      return ['accepted', 'prepared', 'delivering'].includes(this.order.status) && !!this.addressPoint
+    },
+    async loadRoute(force = false) {
+      if (!this.shouldRequestRoute()) {
+        this.routePlan = null
+        return
+      }
+      if (!force && Date.now() - this.lastRouteRefreshAt < 55000) {
+        return
+      }
+      try {
+        const route = await getOrderRoute(this.orderId)
+        this.routePlan = this.normalizeRoute(route)
+        this.lastRouteRefreshAt = Date.now()
+      } catch (error) {
+        console.error(error)
+      }
+    },
     async loadOrder() {
       try {
         const latest = await getOrderDetail(this.orderId)
         this.order = normalizeOrder(latest, this.order)
+        await this.loadRoute(true)
       } catch (error) {
         console.error(error)
       }
@@ -381,6 +435,7 @@ export default {
         if (String(payload.orderId) !== String(this.orderId)) {
           return
         }
+        const previousStatus = this.order.status
         this.order = normalizeOrder(
           {
             ...this.order,
@@ -389,6 +444,14 @@ export default {
           },
           this.order
         )
+        if (payload.status === 'delivered' && previousStatus !== 'delivered' && previousStatus !== 'completed') {
+          uni.showToast({
+            title: '订单已送达，请及时确认收货',
+            icon: 'none',
+            duration: 2200
+          })
+        }
+        this.loadRoute(true)
         setTimeout(() => {
           this.loadOrder()
         }, 300)
@@ -405,6 +468,7 @@ export default {
           },
           this.order
         )
+        this.loadRoute()
       }
 
       websocket.on('socketOpen', this.socketOpenHandler)

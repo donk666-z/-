@@ -9,4 +9,8 @@ public interface OrderRealtimeNotifier {
     void notifyRiderLocation(Long orderId, double lat, double lng);
 
     void notifyMerchantNewOrder(Order order);
+
+    void notifyRiderOrdersUpdated(String reason);
+
+    void notifyRiderAssigned(Long riderId, Long orderId, String message);
 }

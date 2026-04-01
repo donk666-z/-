@@ -29,6 +29,7 @@ public class RiderTaskVO implements Serializable {
 
     private BigDecimal deliveryFee;
     private BigDecimal totalPrice;
+    private Double distance;
     private String remark;
     private String status;
     private String estimatedTime;

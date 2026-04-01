@@ -8,6 +8,22 @@ export const wxLogin = (code) => {
   })
 }
 
+export const studentLogin = (data) => {
+  return request({
+    url: '/auth/student-login',
+    method: 'POST',
+    data
+  })
+}
+
+export const studentRegister = (data) => {
+  return request({
+    url: '/auth/student-register',
+    method: 'POST',
+    data
+  })
+}
+
 export const getUserInfo = () => {
   return request({
     url: '/auth/user-info',

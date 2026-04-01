@@ -25,6 +25,14 @@
           <el-icon><Shop /></el-icon>
           <span>商家管理</span>
         </el-menu-item>
+        <el-menu-item index="/finance">
+          <el-icon><Money /></el-icon>
+          <span>资金对账</span>
+        </el-menu-item>
+        <el-menu-item index="/complaint">
+          <el-icon><WarningFilled /></el-icon>
+          <span>投诉纠纷</span>
+        </el-menu-item>
         <el-menu-item index="/coupon">
           <el-icon><Ticket /></el-icon>
           <span>优惠券管理</span>
@@ -50,7 +58,7 @@
 <script setup>
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../store'
-import { DataAnalysis, User, List, Shop, Ticket, Setting } from '@element-plus/icons-vue'
+import { DataAnalysis, User, List, Shop, Ticket, Setting, Money, WarningFilled } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()

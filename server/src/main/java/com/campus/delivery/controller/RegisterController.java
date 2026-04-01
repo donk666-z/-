@@ -40,10 +40,10 @@ public class RegisterController {
 
     @PostMapping("/merchant-login")
     public Result<Map<String, Object>> merchantLogin(@RequestBody Map<String, String> params) {
-        String phone = params.get("phone");
-        String password = params.get("password");
+        String phone = trim(params.get("phone"));
+        String password = trim(params.get("password"));
 
-        if (phone == null || password == null) {
+        if (!StringUtils.hasText(phone) || !StringUtils.hasText(password)) {
             return Result.error("参数不完整");
         }
 
@@ -51,8 +51,11 @@ public class RegisterController {
         wrapper.eq(User::getPhone, phone).eq(User::getRole, "merchant");
         User user = userMapper.selectOne(wrapper);
 
-        if (user == null || !BCrypt.checkpw(password, user.getPassword())) {
+        if (user == null || user.getPassword() == null || !BCrypt.checkpw(password, user.getPassword())) {
             return Result.error("手机号或密码错误");
+        }
+        if (!isUserActive(user)) {
+            return Result.error(403, "账号已被禁用，请联系管理员");
         }
 
         String token = authService.generateToken(user);
@@ -125,6 +128,9 @@ public class RegisterController {
         if (user == null || user.getPassword() == null || !BCrypt.checkpw(password, user.getPassword())) {
             return Result.error("手机号或密码错误");
         }
+        if (!isUserActive(user)) {
+            return Result.error(403, "账号已被禁用，请联系管理员");
+        }
 
         ensureRiderProfile(user, null);
 
@@ -133,6 +139,86 @@ public class RegisterController {
         data.put("token", token);
         data.put("userInfo", user);
         return Result.success("登录成功", data);
+    }
+
+    @PostMapping("/student-login")
+    public Result<Map<String, Object>> studentLogin(@RequestBody Map<String, String> params) {
+        String phone = trim(params.get("phone"));
+        String password = trim(params.get("password"));
+
+        if (!StringUtils.hasText(phone) || !StringUtils.hasText(password)) {
+            return Result.error("手机号和密码不能为空");
+        }
+        if (!phone.matches("^1[3-9]\\d{9}$")) {
+            return Result.error("手机号格式不正确");
+        }
+
+        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(User::getPhone, phone).eq(User::getRole, "student");
+        User user = userMapper.selectOne(wrapper);
+        if (user == null || user.getPassword() == null) {
+            return Result.error("手机号或密码错误");
+        }
+
+        boolean matched;
+        try {
+            matched = BCrypt.checkpw(password, user.getPassword());
+        } catch (Exception ignored) {
+            matched = false;
+        }
+        if (!matched) {
+            matched = password.equals(user.getPassword());
+        }
+        if (!matched) {
+            return Result.error("手机号或密码错误");
+        }
+        if (!isUserActive(user)) {
+            return Result.error(403, "账号已被禁用，请联系管理员");
+        }
+
+        String token = authService.generateToken(user);
+        Map<String, Object> data = new HashMap<>();
+        data.put("token", token);
+        data.put("userInfo", user);
+        return Result.success("登录成功", data);
+    }
+
+    @PostMapping("/student-register")
+    public Result<Map<String, Object>> studentRegister(@RequestBody Map<String, String> params) {
+        String phone = trim(params.get("phone"));
+        String password = trim(params.get("password"));
+        String nickname = trim(params.get("nickname"));
+
+        if (!StringUtils.hasText(phone) || !StringUtils.hasText(password)) {
+            return Result.error("手机号和密码不能为空");
+        }
+        if (!phone.matches("^1[3-9]\\d{9}$")) {
+            return Result.error("手机号格式不正确");
+        }
+        if (password.length() < 6) {
+            return Result.error("密码至少需要 6 位");
+        }
+
+        LambdaQueryWrapper<User> checkWrapper = new LambdaQueryWrapper<>();
+        checkWrapper.eq(User::getPhone, phone);
+        if (userMapper.selectCount(checkWrapper) > 0) {
+            return Result.error("该手机号已注册");
+        }
+
+        User user = new User();
+        user.setPhone(phone);
+        user.setPassword(BCrypt.hashpw(password, BCrypt.gensalt()));
+        user.setOpenid("student_" + System.currentTimeMillis());
+        user.setNickname(StringUtils.hasText(nickname) ? nickname : "校园用户");
+        user.setRole("student");
+        user.setStatus("active");
+        userMapper.insert(user);
+
+        String token = authService.generateToken(user);
+        Map<String, Object> data = new HashMap<>();
+        data.put("token", token);
+        data.put("userInfo", user);
+        return Result.success("注册成功", data);
     }
 
     @PostMapping("/rider-register")
@@ -196,5 +282,9 @@ public class RegisterController {
 
     private String trim(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private boolean isUserActive(User user) {
+        return user != null && StringUtils.hasText(user.getStatus()) && "active".equalsIgnoreCase(user.getStatus().trim());
     }
 }

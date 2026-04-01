@@ -10,9 +10,9 @@ export const useUserStore = defineStore('user', {
   actions: {
     async login(loginForm) {
       const res = await adminLogin(loginForm)
-      const { token, ...info } = res.data
+      const { token, userInfo } = res.data || {}
       this.token = token
-      this.userInfo = info
+      this.userInfo = userInfo || {}
       setToken(token)
       return res
     },

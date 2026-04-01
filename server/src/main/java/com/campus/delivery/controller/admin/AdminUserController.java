@@ -6,6 +6,7 @@ import com.campus.delivery.common.Result;
 import com.campus.delivery.entity.User;
 import com.campus.delivery.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
@@ -25,14 +26,15 @@ public class AdminUserController {
         @RequestParam(required = false) String status
     ) {
         LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
-        if (keyword != null && !keyword.isEmpty()) {
-            wrapper.like(User::getNickname, keyword).or().like(User::getPhone, keyword);
+        if (StringUtils.hasText(keyword)) {
+            String kw = keyword.trim();
+            wrapper.and(w -> w.like(User::getNickname, kw).or().like(User::getPhone, kw));
         }
-        if (role != null && !role.isEmpty()) {
-            wrapper.eq(User::getRole, role);
+        if (StringUtils.hasText(role)) {
+            wrapper.eq(User::getRole, role.trim());
         }
-        if (status != null && !status.isEmpty()) {
-            wrapper.eq(User::getStatus, status);
+        if (StringUtils.hasText(status)) {
+            wrapper.eq(User::getStatus, status.trim());
         }
         wrapper.orderByDesc(User::getCreatedAt);
         Page<User> result = userService.page(new Page<>(page, size), wrapper);
@@ -47,9 +49,13 @@ public class AdminUserController {
 
     @PutMapping("/{id}/status")
     public Result<Void> updateStatus(@PathVariable Long id, @RequestBody Map<String, String> params) {
+        String status = params == null ? null : params.get("status");
+        if (!StringUtils.hasText(status)) {
+            return Result.error(400, "状态不能为空");
+        }
         User user = new User();
         user.setId(id);
-        user.setStatus(params.get("status"));
+        user.setStatus(status.trim());
         userService.updateById(user);
         return Result.success("状态更新成功", null);
     }

@@ -6,7 +6,10 @@ import com.campus.delivery.common.Result;
 import com.campus.delivery.entity.Coupon;
 import com.campus.delivery.mapper.CouponMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDateTime;
 
 @RestController
 @RequestMapping("/admin/coupon")
@@ -19,11 +22,15 @@ public class AdminCouponController {
     public Result<Page<Coupon>> getList(
         @RequestParam(defaultValue = "1") Integer page,
         @RequestParam(defaultValue = "10") Integer size,
-        @RequestParam(required = false) String status
+        @RequestParam(required = false) String status,
+        @RequestParam(required = false) String keyword
     ) {
         LambdaQueryWrapper<Coupon> wrapper = new LambdaQueryWrapper<>();
-        if (status != null && !status.isEmpty()) {
-            wrapper.eq(Coupon::getStatus, status);
+        if (StringUtils.hasText(status)) {
+            wrapper.eq(Coupon::getStatus, status.trim());
+        }
+        if (StringUtils.hasText(keyword)) {
+            wrapper.like(Coupon::getName, keyword.trim());
         }
         wrapper.orderByDesc(Coupon::getCreatedAt);
         Page<Coupon> pageObj = new Page<>(page, size);
@@ -33,13 +40,25 @@ public class AdminCouponController {
 
     @PostMapping
     public Result<Void> create(@RequestBody Coupon coupon) {
+        coupon.setClaimed(coupon.getClaimed() == null ? 0 : coupon.getClaimed());
+        coupon.setStatus(StringUtils.hasText(coupon.getStatus()) ? coupon.getStatus() : "active");
+        coupon.setCreatedAt(LocalDateTime.now());
+        coupon.setUpdatedAt(LocalDateTime.now());
         couponMapper.insert(coupon);
         return Result.success("优惠券创建成功", null);
     }
 
     @PutMapping("/{id}")
     public Result<Void> update(@PathVariable Long id, @RequestBody Coupon coupon) {
+        Coupon existing = couponMapper.selectById(id);
+        if (existing == null) {
+            return Result.error(404, "优惠券不存在");
+        }
         coupon.setId(id);
+        coupon.setUpdatedAt(LocalDateTime.now());
+        if (coupon.getClaimed() == null) {
+            coupon.setClaimed(existing.getClaimed());
+        }
         couponMapper.updateById(coupon);
         return Result.success("优惠券更新成功", null);
     }

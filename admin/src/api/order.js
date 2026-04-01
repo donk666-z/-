@@ -1,13 +1,13 @@
 import request from './request'
 
 export function getOrderList(params) {
-  return request.get('/orders', { params })
+  return request.get('/admin/order/list', { params })
 }
 
 export function getOrderDetail(id) {
-  return request.get(`/orders/${id}`)
+  return request.get(`/admin/order/${id}`)
 }
 
 export function cancelOrder(id) {
-  return request.put(`/orders/${id}/cancel`)
+  return request.post(`/admin/order/${id}/cancel`)
 }

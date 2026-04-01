@@ -68,6 +68,8 @@
 import { getAvailableTasks, getCurrentTask, grabTask } from '@/api/task'
 import { getRiderProfile, updateRiderStatus } from '@/api/profile'
 import { ensureLogin } from '@/utils/session'
+import websocket from '@/utils/websocket'
+import { BASE_URL } from '@/utils/request'
 
 export default {
   data() {
@@ -75,7 +77,10 @@ export default {
       isOnline: false,
       taskList: [],
       currentTask: null,
-      statusLoading: false
+      statusLoading: false,
+      riderOrdersUpdatedHandler: null,
+      riderAssignedHandler: null,
+      realtimeRefreshTimer: null
     }
   },
   computed: {
@@ -130,9 +135,60 @@ export default {
     if (!ensureLogin()) {
       return
     }
+    this.setupRealtime()
     this.bootstrapPage()
   },
+  onHide() {
+    this.teardownRealtime()
+  },
+  onUnload() {
+    this.teardownRealtime()
+  },
   methods: {
+    resolveWsUrl() {
+      return `${BASE_URL.replace(/^http/i, 'ws')}/ws`
+    },
+    setupRealtime() {
+      if (this.riderOrdersUpdatedHandler || this.riderAssignedHandler) {
+        return
+      }
+      this.riderOrdersUpdatedHandler = () => {
+        this.refreshByRealtime()
+      }
+      this.riderAssignedHandler = (payload = {}) => {
+        if (payload && payload.message) {
+          uni.showToast({ title: payload.message, icon: 'none' })
+        }
+        this.refreshByRealtime()
+      }
+      websocket.on('riderOrdersUpdated', this.riderOrdersUpdatedHandler)
+      websocket.on('riderAssigned', this.riderAssignedHandler)
+      websocket.connect(this.resolveWsUrl())
+    },
+    teardownRealtime() {
+      if (this.realtimeRefreshTimer) {
+        clearTimeout(this.realtimeRefreshTimer)
+        this.realtimeRefreshTimer = null
+      }
+      if (this.riderOrdersUpdatedHandler) {
+        websocket.off('riderOrdersUpdated', this.riderOrdersUpdatedHandler)
+        this.riderOrdersUpdatedHandler = null
+      }
+      if (this.riderAssignedHandler) {
+        websocket.off('riderAssigned', this.riderAssignedHandler)
+        this.riderAssignedHandler = null
+      }
+      websocket.close()
+    },
+    refreshByRealtime() {
+      if (this.realtimeRefreshTimer) {
+        clearTimeout(this.realtimeRefreshTimer)
+      }
+      this.realtimeRefreshTimer = setTimeout(() => {
+        this.realtimeRefreshTimer = null
+        this.bootstrapPage()
+      }, 250)
+    },
     formatMoney(value) {
       const number = Number(value)
       return Number.isFinite(number) ? number.toFixed(2) : '0.00'

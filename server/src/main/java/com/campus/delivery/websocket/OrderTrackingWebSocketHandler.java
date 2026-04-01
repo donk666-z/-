@@ -31,6 +31,7 @@ public class OrderTrackingWebSocketHandler extends TextWebSocketHandler {
     private final Map<WebSocketSession, CopyOnWriteArraySet<Long>> sessionOrders = new ConcurrentHashMap<>();
     /** merchant userId -> 商户连接会话 */
     private final Map<Long, CopyOnWriteArraySet<WebSocketSession>> merchantSessions = new ConcurrentHashMap<>();
+    private final Map<Long, CopyOnWriteArraySet<WebSocketSession>> riderSessions = new ConcurrentHashMap<>();
 
     @Autowired
     private OrderMapper orderMapper;
@@ -45,6 +46,8 @@ public class OrderTrackingWebSocketHandler extends TextWebSocketHandler {
         String role = (String) session.getAttributes().get("role");
         if (userId != null && "merchant".equals(role)) {
             merchantSessions.computeIfAbsent(userId, key -> new CopyOnWriteArraySet<>()).add(session);
+        } else if (userId != null && "rider".equals(role)) {
+            riderSessions.computeIfAbsent(userId, key -> new CopyOnWriteArraySet<>()).add(session);
         }
     }
 
@@ -96,6 +99,14 @@ public class OrderTrackingWebSocketHandler extends TextWebSocketHandler {
                 sessions.remove(session);
                 if (sessions.isEmpty()) {
                     merchantSessions.remove(userId);
+                }
+            }
+        } else if (userId != null && "rider".equals(role)) {
+            CopyOnWriteArraySet<WebSocketSession> sessions = riderSessions.get(userId);
+            if (sessions != null) {
+                sessions.remove(session);
+                if (sessions.isEmpty()) {
+                    riderSessions.remove(userId);
                 }
             }
         }
@@ -160,6 +171,23 @@ public class OrderTrackingWebSocketHandler extends TextWebSocketHandler {
         sendMerchantEvent(merchant.getUserId(), "newOrder", payload);
     }
 
+    public void broadcastRiderOrdersUpdated(String reason) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("reason", reason == null ? "updated" : reason);
+        sendRiderEventToAll("riderOrdersUpdated", payload);
+    }
+
+    public void broadcastRiderAssigned(Long riderId, Long orderId, String message) {
+        if (riderId == null) {
+            return;
+        }
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("riderId", riderId);
+        payload.put("orderId", orderId);
+        payload.put("message", message == null ? "系统已为你分配新订单" : message);
+        sendRiderEvent(riderId, "riderAssigned", payload);
+    }
+
     private void sendEvent(Long orderId, String event, Map<String, Object> payload) {
         CopyOnWriteArraySet<WebSocketSession> subs = orderSubscribers.get(orderId);
         if (subs == null || subs.isEmpty()) {
@@ -174,6 +202,23 @@ public class OrderTrackingWebSocketHandler extends TextWebSocketHandler {
             return;
         }
         sendToSessions(sessions, event, payload);
+    }
+
+    private void sendRiderEvent(Long riderUserId, String event, Map<String, Object> payload) {
+        CopyOnWriteArraySet<WebSocketSession> sessions = riderSessions.get(riderUserId);
+        if (sessions == null || sessions.isEmpty()) {
+            return;
+        }
+        sendToSessions(sessions, event, payload);
+    }
+
+    private void sendRiderEventToAll(String event, Map<String, Object> payload) {
+        for (CopyOnWriteArraySet<WebSocketSession> sessions : riderSessions.values()) {
+            if (sessions == null || sessions.isEmpty()) {
+                continue;
+            }
+            sendToSessions(sessions, event, payload);
+        }
     }
 
     private void sendToSessions(CopyOnWriteArraySet<WebSocketSession> sessions, String event, Map<String, Object> payload) {

@@ -156,6 +156,7 @@
 <script>
 import { getDishDetail, createDish, updateDish, getDishList } from '@/api/dish'
 import { UPLOAD_URL } from '@/config/api'
+import { handleUnauthorized } from '@/utils/session'
 
 const emptyOption = () => ({
   dishId: null,
@@ -315,7 +316,18 @@ export default {
               Authorization: `Bearer ${uni.getStorageSync('token')}`
             },
             success: (uploadRes) => {
-              const data = JSON.parse(uploadRes.data)
+              if (uploadRes.statusCode === 401) {
+                uni.showToast({ title: '请先登录', icon: 'none' })
+                handleUnauthorized()
+                return
+              }
+              if (uploadRes.statusCode === 403) {
+                const msg = '账号已被禁用，请重新登录'
+                uni.showToast({ title: msg, icon: 'none' })
+                handleUnauthorized()
+                return
+              }
+              const data = JSON.parse(uploadRes.data || '{}')
               if (data.code === 0) {
                 this.form.image = data.data.url || data.data
                 return
