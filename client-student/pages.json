@@ -3,79 +3,85 @@
     {
       "path": "pages/index/index",
       "style": {
-        "navigationBarTitleText": "校园外卖"
+        "navigationBarTitleText": "\u6821\u56ed\u5916\u5356"
       }
     },
     {
       "path": "pages/merchant/detail",
       "style": {
-        "navigationBarTitleText": "餐厅详情"
+        "navigationBarTitleText": "\u9910\u5385\u8be6\u60c5"
       }
     },
     {
       "path": "pages/order/list",
       "style": {
-        "navigationBarTitleText": "我的订单"
+        "navigationBarTitleText": "\u6211\u7684\u8ba2\u5355"
       }
     },
     {
       "path": "pages/order/confirm",
       "style": {
-        "navigationBarTitleText": "确认订单"
+        "navigationBarTitleText": "\u786e\u8ba4\u8ba2\u5355"
       }
     },
     {
       "path": "pages/order/detail",
       "style": {
-        "navigationBarTitleText": "订单详情"
+        "navigationBarTitleText": "\u8ba2\u5355\u8be6\u60c5"
       }
     },
     {
       "path": "pages/order/review",
       "style": {
-        "navigationBarTitleText": "评价订单"
+        "navigationBarTitleText": "\u8bc4\u4ef7\u8ba2\u5355"
       }
     },
     {
       "path": "pages/user/index",
       "style": {
-        "navigationBarTitleText": "个人中心"
+        "navigationBarTitleText": "\u4e2a\u4eba\u4e2d\u5fc3"
+      }
+    },
+    {
+      "path": "pages/user/edit",
+      "style": {
+        "navigationBarTitleText": "\u7f16\u8f91\u4e2a\u4eba\u4fe1\u606f"
       }
     },
     {
       "path": "pages/user/address",
       "style": {
-        "navigationBarTitleText": "收货地址"
+        "navigationBarTitleText": "\u6536\u8d27\u5730\u5740"
       }
     },
     {
       "path": "pages/login/index",
       "style": {
-        "navigationBarTitleText": "登录"
+        "navigationBarTitleText": "\u767b\u5f55"
       }
     },
     {
       "path": "pages/student/coupon/list",
       "style": {
-        "navigationBarTitleText": "优惠券"
+        "navigationBarTitleText": "\u4f18\u60e0\u5238"
       }
     },
     {
       "path": "pages/student/complaint/list",
       "style": {
-        "navigationBarTitleText": "投诉建议"
+        "navigationBarTitleText": "\u6295\u8bc9\u5efa\u8bae"
       }
     },
     {
       "path": "pages/student/about/index",
       "style": {
-        "navigationBarTitleText": "关于我们"
+        "navigationBarTitleText": "\u5173\u4e8e\u6211\u4eec"
       }
     }
   ],
   "globalStyle": {
     "navigationBarTextStyle": "black",
-    "navigationBarTitleText": "校园外卖",
+    "navigationBarTitleText": "\u6821\u56ed\u5916\u5356",
     "navigationBarBackgroundColor": "#FFFFFF",
     "backgroundColor": "#F8F8F8"
   }

@@ -4,25 +4,30 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+
 import java.io.Serializable;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("user_coupons")
-public class UserCoupon implements Serializable {
+@TableName("promotion_activities")
+public class PromotionActivity implements Serializable {
 
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    private Long userId;
+    private String name;
 
     private Long couponId;
 
-    private Long promotionId;
-
     private String status;
 
-    private LocalDateTime usedTime;
+    private LocalDateTime startTime;
+
+    private LocalDateTime endTime;
+
+    private Integer claimLimitPerUser;
+
+    private String description;
 
     private LocalDateTime createdAt;
 

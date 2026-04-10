@@ -12,6 +12,10 @@
       <view v-for="category in displayCategories" :key="category.id" class="category-block">
         <text class="category-name">{{ category.name }}</text>
         <view v-for="dish in category.dishes" :key="dish.id" class="dish-card">
+          <image v-if="dish.image" :src="dish.image" class="dish-image" mode="aspectFill"></image>
+          <view v-else class="dish-image dish-image-placeholder">
+            <u-icon name="photo" size="30" color="#c5cbd6"></u-icon>
+          </view>
           <view class="dish-main">
             <view class="dish-title">
               <text class="dish-name">{{ dish.name }}</text>
@@ -97,9 +101,9 @@
           <text class="popup-link" @click="closeComboPopup">关闭</text>
         </view>
         <view v-for="(group, groupIndex) in activeComboSelections" :key="groupIndex" class="combo-group">
-          <text class="combo-group-title">{{ group.name }}，至少 {{ group.minSelect }} 项，最多 {{ group.maxSelect }} 项</text>
+          <text class="combo-group-title">{{ group.categoryName }}，需选择 {{ group.requiredCount }} 项</text>
           <view
-            v-for="option in group.allOptions"
+            v-for="option in group.options"
             :key="option.dishId"
             class="combo-option"
             :class="{ active: isComboOptionSelected(groupIndex, option.dishId), disabled: !option.available }"
@@ -135,9 +139,10 @@ const normalizeType = (type) => (type === 'combo' ? 'combo' : 'single')
 const normalizeComboSelections = (comboSelections) => {
   if (!Array.isArray(comboSelections)) return []
   return comboSelections
-    .map((group, groupIndex) => ({
-      groupIndex: group.groupIndex !== undefined && group.groupIndex !== null ? Number(group.groupIndex) : groupIndex,
-      name: group.name || '',
+    .map((group) => ({
+      categoryId: group.categoryId !== undefined && group.categoryId !== null ? Number(group.categoryId) : null,
+      categoryName: group.categoryName || group.name || '',
+      requiredCount: Math.max(1, Number(group.requiredCount) || 1),
       options: Array.isArray(group.options)
         ? group.options
             .map((option) => {
@@ -154,13 +159,20 @@ const normalizeComboSelections = (comboSelections) => {
             .sort((left, right) => left.dishId - right.dishId)
         : []
     }))
-    .sort((left, right) => left.groupIndex - right.groupIndex)
+    .sort((left, right) => {
+      const leftId = left.categoryId === null ? Number.MAX_SAFE_INTEGER : left.categoryId
+      const rightId = right.categoryId === null ? Number.MAX_SAFE_INTEGER : right.categoryId
+      if (leftId === rightId) {
+        return String(left.categoryName || '').localeCompare(String(right.categoryName || ''))
+      }
+      return leftId - rightId
+    })
 }
 
 const buildComboSignature = (comboSelections) =>
   JSON.stringify(
     normalizeComboSelections(comboSelections).map((group) => ({
-      groupIndex: group.groupIndex,
+      categoryId: group.categoryId,
       options: group.options.map((option) => ({
         dishId: option.dishId,
         quantity: option.quantity
@@ -171,7 +183,7 @@ const buildComboSignature = (comboSelections) =>
 const buildComboSummary = (comboSelections) =>
   normalizeComboSelections(comboSelections)
     .filter((group) => group.options.length > 0)
-    .map((group) => `${group.name || '已选'}: ${group.options.map((option) => option.dishName).join('、')}`)
+    .map((group) => `${group.categoryName || '已选分类'}: ${group.options.map((option) => option.dishName).join('、')}`)
     .join('；')
 
 export default {
@@ -286,11 +298,11 @@ export default {
       return `combo-${dishId}-${buildComboSignature(comboSelections)}`
     },
     getComboDishSummary(dish) {
-      if (!dish || !dish.comboConfig || !Array.isArray(dish.comboConfig.groups)) return ''
-      return dish.comboConfig.groups
-        .map((group) => {
-          const availableOptions = Array.isArray(group.options) ? group.options.filter((option) => option && option.available) : []
-          return availableOptions.length ? `${group.name || '分组'}可选 ${availableOptions.map((option) => option.dishName).join('、')}` : ''
+      if (!dish || !dish.comboConfig || !Array.isArray(dish.comboConfig.rules)) return ''
+      return dish.comboConfig.rules
+        .map((rule) => {
+          const availableOptions = Array.isArray(rule.items) ? rule.items.filter((item) => item && item.available) : []
+          return availableOptions.length ? `${rule.categoryName || '已选分类'}可选 ${availableOptions.map((item) => item.dishName).join('、')}` : ''
         })
         .filter(Boolean)
         .join('；')
@@ -350,21 +362,20 @@ export default {
       if (!dish || dish.stock <= 0) return
       this.activeComboDish = JSON.parse(JSON.stringify(dish))
       this.activeComboQuantity = 1
-      this.activeComboSelections = ((dish.comboConfig && dish.comboConfig.groups) || []).map((group, groupIndex) => ({
-        groupIndex,
-        name: group.name || '',
-        minSelect: Number(group.minSelect || 0),
-        maxSelect: Number(group.maxSelect || 0),
-        options: [],
-        allOptions: Array.isArray(group.options)
-          ? group.options.map((option) => ({
-              dishId: Number(option.dishId),
-              dishName: option.dishName || '',
-              dishImage: option.dishImage || '',
-              quantity: Number(option.quantity) || 1,
-              extraPrice: Number(option.extraPrice) || 0,
-              available: !!option.available,
-              dishStock: Number(option.dishStock || 0)
+      this.activeComboSelections = ((dish.comboConfig && dish.comboConfig.rules) || []).map((rule) => ({
+        categoryId: rule.categoryId !== undefined && rule.categoryId !== null ? Number(rule.categoryId) : null,
+        categoryName: rule.categoryName || '',
+        requiredCount: Math.max(1, this.toNumber(rule.requiredCount) || 1),
+        selectedOptions: [],
+        options: Array.isArray(rule.items)
+          ? rule.items.map((item) => ({
+              dishId: Number(item.dishId),
+              dishName: item.dishName || '',
+              dishImage: item.dishImage || '',
+              quantity: 1,
+              extraPrice: this.toNumber(item.extraPrice !== undefined ? item.extraPrice : rule.extraPrice),
+              available: !!item.available,
+              dishStock: this.toNumber(item.dishStock)
             }))
           : []
       }))
@@ -378,7 +389,7 @@ export default {
     },
     isComboOptionSelected(groupIndex, dishId) {
       const group = this.activeComboSelections[groupIndex]
-      return !!group && group.options.some((option) => option.dishId === dishId)
+      return !!group && group.selectedOptions.some((option) => option.dishId === dishId)
     },
     toggleComboOption(groupIndex, option) {
       const group = this.activeComboSelections[groupIndex]
@@ -386,21 +397,21 @@ export default {
         if (option && !option.available) uni.showToast({ title: '该选项暂不可选', icon: 'none' })
         return
       }
-      const existingIndex = group.options.findIndex((current) => current.dishId === option.dishId)
-      if (group.maxSelect === 1) {
-        group.options = [this.pickComboOption(option)]
+      const existingIndex = group.selectedOptions.findIndex((current) => current.dishId === option.dishId)
+      if (group.requiredCount === 1) {
+        group.selectedOptions = [this.pickComboOption(option)]
         return
       }
       if (existingIndex >= 0) {
-        group.options.splice(existingIndex, 1)
+        group.selectedOptions.splice(existingIndex, 1)
         return
       }
-      if (group.maxSelect > 0 && group.options.length >= group.maxSelect) {
-        uni.showToast({ title: `最多选择 ${group.maxSelect} 项`, icon: 'none' })
+      if (group.selectedOptions.length >= group.requiredCount) {
+        uni.showToast({ title: `该分类需选择 ${group.requiredCount} 项`, icon: 'none' })
         return
       }
-      group.options.push(this.pickComboOption(option))
-      group.options.sort((left, right) => left.dishId - right.dishId)
+      group.selectedOptions.push(this.pickComboOption(option))
+      group.selectedOptions.sort((left, right) => left.dishId - right.dishId)
     },
     pickComboOption(option) {
       return {
@@ -414,19 +425,16 @@ export default {
     getActiveComboPrice() {
       if (!this.activeComboDish) return '0.00'
       const extra = this.activeComboSelections.reduce((sum, group) => {
-        return sum + group.options.reduce((groupSum, option) => groupSum + this.toNumber(option.extraPrice), 0)
+        return sum + group.selectedOptions.reduce((groupSum, option) => groupSum + this.toNumber(option.extraPrice), 0)
       }, 0)
       return (this.toNumber(this.activeComboDish.price) + extra).toFixed(2)
     },
     validateActiveComboSelections() {
       for (const group of this.activeComboSelections) {
-        const count = group.options.length
-        if (count < group.minSelect) {
-          uni.showToast({ title: `${group.name} 至少选择 ${group.minSelect} 项`, icon: 'none' })
-          return false
-        }
-        if (group.maxSelect > 0 && count > group.maxSelect) {
-          uni.showToast({ title: `${group.name} 最多选择 ${group.maxSelect} 项`, icon: 'none' })
+        const requiredCount = Math.max(1, this.toNumber(group.requiredCount) || 1)
+        const count = group.selectedOptions.length
+        if (count !== requiredCount) {
+          uni.showToast({ title: `${group.categoryName || '套餐分类'}需选择 ${requiredCount} 项`, icon: 'none' })
           return false
         }
       }
@@ -435,9 +443,10 @@ export default {
     addActiveComboToCart() {
       if (!this.activeComboDish || !this.validateActiveComboSelections()) return
       const comboSelections = this.activeComboSelections.map((group) => ({
-        groupIndex: group.groupIndex,
-        name: group.name,
-        options: group.options.map((option) => ({ ...option }))
+        categoryId: group.categoryId,
+        categoryName: group.categoryName,
+        requiredCount: group.requiredCount,
+        options: group.selectedOptions.map((option) => ({ ...option }))
       }))
       const cartKey = this.buildComboCartKey(this.activeComboDish.id, comboSelections)
       const existingItem = this.safeCart.find((item) => item.cartKey === cartKey)
@@ -586,6 +595,20 @@ export default {
 .dish-main {
   flex: 1;
   min-width: 0;
+}
+
+.dish-image {
+  width: 132rpx;
+  height: 132rpx;
+  flex-shrink: 0;
+  border-radius: 20rpx;
+  background: #f3f5f8;
+}
+
+.dish-image-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .dish-title,

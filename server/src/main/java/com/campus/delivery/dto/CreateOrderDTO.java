@@ -1,6 +1,5 @@
 package com.campus.delivery.dto;
 
-import com.campus.delivery.model.ComboSnapshot;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.Data;
 import java.math.BigDecimal;
@@ -21,6 +20,8 @@ public class CreateOrderDTO {
     private String remark;
     
     private BigDecimal deliveryFee;
+
+    private Long userCouponId;
     
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -37,8 +38,9 @@ public class CreateOrderDTO {
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ComboSelectionGroupDTO {
-        private Integer groupIndex;
-        private String name;
+        private Long categoryId;
+        private String categoryName;
+        private Integer requiredCount;
         private List<ComboSelectionOptionDTO> options;
     }
 

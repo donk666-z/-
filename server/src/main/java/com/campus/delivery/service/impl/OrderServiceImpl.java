@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.campus.delivery.dto.CreateOrderDTO;
 import com.campus.delivery.dto.StudentOrderVO;
 import com.campus.delivery.entity.Address;
+import com.campus.delivery.entity.Coupon;
 import com.campus.delivery.entity.Dish;
 import com.campus.delivery.entity.Merchant;
 import com.campus.delivery.entity.Order;
@@ -16,13 +17,16 @@ import com.campus.delivery.entity.Rider;
 import com.campus.delivery.entity.SystemConfig;
 import com.campus.delivery.entity.Transaction;
 import com.campus.delivery.entity.User;
+import com.campus.delivery.entity.UserCoupon;
 import com.campus.delivery.exception.BusinessException;
+import com.campus.delivery.mapper.CouponMapper;
 import com.campus.delivery.mapper.OrderItemMapper;
 import com.campus.delivery.mapper.OrderMapper;
 import com.campus.delivery.mapper.ReviewMapper;
 import com.campus.delivery.mapper.RiderMapper;
 import com.campus.delivery.mapper.SystemConfigMapper;
 import com.campus.delivery.mapper.TransactionMapper;
+import com.campus.delivery.mapper.UserCouponMapper;
 import com.campus.delivery.model.ComboConfig;
 import com.campus.delivery.model.ComboSnapshot;
 import com.campus.delivery.service.DishService;
@@ -41,6 +45,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -96,6 +101,12 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     @Autowired
     private TransactionMapper transactionMapper;
 
+    @Autowired
+    private CouponMapper couponMapper;
+
+    @Autowired
+    private UserCouponMapper userCouponMapper;
+
     private BigDecimal resolveDeliveryFee(BigDecimal clientFee) {
         BigDecimal fee = new BigDecimal("3.00");
         LambdaQueryWrapper<SystemConfig> wrapper = new LambdaQueryWrapper<>();
@@ -111,6 +122,18 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             return fee;
         }
         return fee;
+    }
+
+    private BigDecimal resolveMinOrderAmount() {
+        String value = getConfigValue("min_order_amount");
+        if (!StringUtils.hasText(value)) {
+            return new BigDecimal("10.00");
+        }
+        try {
+            return new BigDecimal(value.trim());
+        } catch (Exception ignored) {
+            return new BigDecimal("10.00");
+        }
     }
 
     @Override
@@ -148,8 +171,18 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             );
         }
 
+        BigDecimal minOrderAmount = resolveMinOrderAmount();
+        if (dishPrice.compareTo(minOrderAmount) < 0) {
+            throw new BusinessException(400, "未达到最低起送金额");
+        }
+
         BigDecimal deliveryFee = resolveDeliveryFee(dto.getDeliveryFee());
-        BigDecimal totalPrice = dishPrice.add(deliveryFee);
+        CouponUsage couponUsage = resolveCouponUsage(dto.getUserCouponId(), userId, dishPrice);
+        BigDecimal totalPrice = dishPrice.subtract(couponUsage.getDiscountAmount());
+        if (totalPrice.compareTo(BigDecimal.ZERO) < 0) {
+            totalPrice = BigDecimal.ZERO;
+        }
+        totalPrice = totalPrice.add(deliveryFee);
 
         Order order = new Order();
         order.setOrderNo("ORD" + IdUtil.getSnowflakeNextIdStr());
@@ -165,6 +198,21 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         order.setPaymentMethod("mock");
         order.setPaymentTime(LocalDateTime.now());
         save(order);
+
+        if (couponUsage.getUserCoupon() != null) {
+            LocalDateTime now = LocalDateTime.now();
+            LambdaUpdateWrapper<UserCoupon> couponUpdateWrapper = new LambdaUpdateWrapper<UserCoupon>();
+            couponUpdateWrapper.eq(UserCoupon::getId, couponUsage.getUserCoupon().getId())
+                    .eq(UserCoupon::getUserId, userId)
+                    .eq(UserCoupon::getStatus, "unused")
+                    .set(UserCoupon::getStatus, "used")
+                    .set(UserCoupon::getUsedTime, now)
+                    .set(UserCoupon::getUpdatedAt, now);
+            int updatedRows = userCouponMapper.update(null, couponUpdateWrapper);
+            if (updatedRows <= 0) {
+                throw new BusinessException(400, "优惠券已被使用或不可用");
+            }
+        }
 
         for (PreparedOrderItem preparedItem : preparedItems) {
             OrderItem orderItem = new OrderItem();
@@ -193,6 +241,93 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         notifyMerchantNewOrderAfterCommit(order);
 
         return order;
+    }
+
+    private CouponUsage resolveCouponUsage(Long userCouponId, Long userId, BigDecimal dishPrice) {
+        if (userCouponId == null) {
+            return CouponUsage.empty();
+        }
+
+        UserCoupon userCoupon = userCouponMapper.selectById(userCouponId);
+        if (userCoupon == null || !userId.equals(userCoupon.getUserId())) {
+            throw new BusinessException(400, "优惠券不存在");
+        }
+        if (!"unused".equals(userCoupon.getStatus())) {
+            throw new BusinessException(400, "该优惠券不可使用");
+        }
+
+        Coupon coupon = couponMapper.selectById(userCoupon.getCouponId());
+        if (coupon == null) {
+            throw new BusinessException(400, "优惠券已不可用");
+        }
+        if (!"active".equals(coupon.getStatus())) {
+            throw new BusinessException(400, "当前优惠券不可使用");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        if (coupon.getStartTime() != null && now.isBefore(coupon.getStartTime())) {
+            throw new BusinessException(400, "优惠券尚未生效");
+        }
+        if (coupon.getEndTime() != null && now.isAfter(coupon.getEndTime())) {
+            throw new BusinessException(400, "优惠券已过期");
+        }
+
+        BigDecimal minAmount = coupon.getMinAmount() == null ? BigDecimal.ZERO : coupon.getMinAmount();
+        if (dishPrice.compareTo(minAmount) < 0) {
+            throw new BusinessException(400, "未达到优惠券使用门槛");
+        }
+
+        BigDecimal discountAmount = calculateCouponDiscount(coupon, dishPrice);
+        if (discountAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException(400, "当前优惠券优惠金额无效");
+        }
+
+        return new CouponUsage(userCoupon, discountAmount);
+    }
+
+    private BigDecimal calculateCouponDiscount(Coupon coupon, BigDecimal dishPrice) {
+        if (coupon == null || dishPrice == null || dishPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ZERO;
+        }
+
+        if ("discount".equals(coupon.getType())) {
+            BigDecimal discountRate = coupon.getDiscount() == null ? BigDecimal.ZERO : coupon.getDiscount();
+            if (discountRate.compareTo(BigDecimal.ZERO) <= 0) {
+                return BigDecimal.ZERO;
+            }
+            BigDecimal payable = dishPrice.multiply(discountRate)
+                    .divide(new BigDecimal("10"), 2, RoundingMode.HALF_UP);
+            BigDecimal discountAmount = dishPrice.subtract(payable);
+            return discountAmount.compareTo(BigDecimal.ZERO) > 0 ? discountAmount : BigDecimal.ZERO;
+        }
+
+        BigDecimal discountAmount = coupon.getDiscount() == null ? BigDecimal.ZERO : coupon.getDiscount();
+        if (discountAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ZERO;
+        }
+        return discountAmount.min(dishPrice);
+    }
+
+    private static class CouponUsage {
+        private final UserCoupon userCoupon;
+        private final BigDecimal discountAmount;
+
+        private CouponUsage(UserCoupon userCoupon, BigDecimal discountAmount) {
+            this.userCoupon = userCoupon;
+            this.discountAmount = discountAmount == null ? BigDecimal.ZERO : discountAmount;
+        }
+
+        private static CouponUsage empty() {
+            return new CouponUsage(null, BigDecimal.ZERO);
+        }
+
+        public UserCoupon getUserCoupon() {
+            return userCoupon;
+        }
+
+        public BigDecimal getDiscountAmount() {
+            return discountAmount;
+        }
     }
 
     @Override
@@ -860,87 +995,80 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                                                     Map<Long, Dish> reservedDishMap,
                                                     Map<Long, Dish> dishCache) {
         ComboConfig comboConfig = dishService.parseComboConfig(comboDish);
-        if (comboConfig == null || comboConfig.getGroups() == null || comboConfig.getGroups().isEmpty()) {
+        if (comboConfig == null || comboConfig.getRules() == null || comboConfig.getRules().isEmpty()) {
             throw new BusinessException(400, "套餐配置不存在或已失效");
         }
 
         BigDecimal unitPrice = comboDish.getPrice() == null ? BigDecimal.ZERO : comboDish.getPrice();
         ComboSnapshot comboSnapshot = new ComboSnapshot();
-        List<ComboSnapshot.Group> snapshotGroups = new ArrayList<>();
+        List<ComboSnapshot.Rule> snapshotRules = new ArrayList<ComboSnapshot.Rule>();
 
-        for (int groupIndex = 0; groupIndex < comboConfig.getGroups().size(); groupIndex++) {
-            ComboConfig.Group group = comboConfig.getGroups().get(groupIndex);
-            Map<Long, ComboConfig.Option> optionMap = buildOptionMap(group);
-
+        for (ComboConfig.Rule rule : comboConfig.getRules()) {
             CreateOrderDTO.ComboSelectionGroupDTO selectedGroup = resolveSelectionGroup(
                     itemDTO.getComboSelections(),
-                    groupIndex,
-                    group.getName()
+                    rule.getCategoryId(),
+                    rule.getCategoryName()
             );
-            List<CreateOrderDTO.ComboSelectionOptionDTO> selectedOptions = selectedGroup == null || selectedGroup.getOptions() == null
-                    ? Collections.emptyList()
-                    : selectedGroup.getOptions();
+            List<CreateOrderDTO.ComboSelectionOptionDTO> selectedOptions =
+                    selectedGroup == null || selectedGroup.getOptions() == null
+                            ? Collections.<CreateOrderDTO.ComboSelectionOptionDTO>emptyList()
+                            : selectedGroup.getOptions();
 
-            validateSelectionCount(group, selectedOptions.size());
+            validateSelectionCount(rule, selectedOptions.size());
 
-            Set<Long> selectedDishIds = new HashSet<>();
-            List<ComboSnapshot.Option> snapshotOptions = new ArrayList<>();
+            Set<Long> selectedDishIds = new HashSet<Long>();
+            List<ComboSnapshot.Item> snapshotItems = new ArrayList<ComboSnapshot.Item>();
             for (CreateOrderDTO.ComboSelectionOptionDTO selectedOption : selectedOptions) {
                 if (selectedOption == null || selectedOption.getDishId() == null) {
                     throw new BusinessException(400, "套餐选项无效");
                 }
                 if (!selectedDishIds.add(selectedOption.getDishId())) {
-                    throw new BusinessException(400, "套餐分组“" + group.getName() + "”存在重复选项");
+                    throw new BusinessException(400, "套餐分类选项不能重复");
                 }
 
-                ComboConfig.Option configuredOption = optionMap.get(selectedOption.getDishId());
-                if (configuredOption == null) {
-                    throw new BusinessException(400, "套餐选项已变更，请重新选择");
-                }
-
-                Dish optionDish = loadDish(configuredOption.getDishId(), dishCache);
+                Dish optionDish = loadDish(selectedOption.getDishId(), dishCache);
                 if (optionDish == null || !comboDish.getMerchantId().equals(optionDish.getMerchantId())) {
                     throw new BusinessException(400, "套餐选项菜品不存在");
                 }
                 if (!DishService.TYPE_SINGLE.equals(normalizeDishType(optionDish.getType()))) {
                     throw new BusinessException(400, "套餐选项只能是单品");
                 }
+                if (!Objects.equals(optionDish.getCategoryId(), rule.getCategoryId())) {
+                    throw new BusinessException(400, "套餐选项与分类不匹配");
+                }
                 if (!"available".equals(optionDish.getStatus())) {
                     throw new BusinessException(400, "套餐选项“" + optionDish.getName() + "”暂不可选");
                 }
 
-                int optionQuantity = configuredOption.getQuantity() == null || configuredOption.getQuantity() <= 0
+                int optionQuantity = selectedOption.getQuantity() == null || selectedOption.getQuantity() <= 0
                         ? 1
-                        : configuredOption.getQuantity();
+                        : selectedOption.getQuantity();
                 reserveDishStock(optionDish, optionQuantity * itemDTO.getQuantity(), stockReservations, reservedDishMap);
 
-                BigDecimal extraPrice = configuredOption.getExtraPrice() == null
-                        ? BigDecimal.ZERO
-                        : configuredOption.getExtraPrice();
+                BigDecimal extraPrice = selectedOption.getExtraPrice() == null
+                        ? (rule.getExtraPrice() == null ? BigDecimal.ZERO : rule.getExtraPrice())
+                        : selectedOption.getExtraPrice();
                 unitPrice = unitPrice.add(extraPrice);
 
-                ComboSnapshot.Option snapshotOption = new ComboSnapshot.Option();
-                snapshotOption.setDishId(optionDish.getId());
-                snapshotOption.setDishName(optionDish.getName());
-                snapshotOption.setDishImage(optionDish.getImage());
-                snapshotOption.setQuantity(optionQuantity);
-                snapshotOption.setExtraPrice(extraPrice);
-                snapshotOption.setDishPrice(optionDish.getPrice());
-                snapshotOptions.add(snapshotOption);
+                ComboSnapshot.Item snapshotItem = new ComboSnapshot.Item();
+                snapshotItem.setDishId(optionDish.getId());
+                snapshotItem.setDishName(optionDish.getName());
+                snapshotItem.setDishImage(optionDish.getImage());
+                snapshotItem.setQuantity(optionQuantity);
+                snapshotItem.setExtraPrice(extraPrice);
+                snapshotItem.setDishPrice(optionDish.getPrice());
+                snapshotItems.add(snapshotItem);
             }
 
-            if (!snapshotOptions.isEmpty()) {
-                ComboSnapshot.Group snapshotGroup = new ComboSnapshot.Group();
-                snapshotGroup.setGroupIndex(groupIndex);
-                snapshotGroup.setName(group.getName());
-                snapshotGroup.setMinSelect(group.getMinSelect());
-                snapshotGroup.setMaxSelect(group.getMaxSelect());
-                snapshotGroup.setOptions(snapshotOptions);
-                snapshotGroups.add(snapshotGroup);
-            }
+            ComboSnapshot.Rule snapshotRule = new ComboSnapshot.Rule();
+            snapshotRule.setCategoryId(rule.getCategoryId());
+            snapshotRule.setCategoryName(rule.getCategoryName());
+            snapshotRule.setRequiredCount(rule.getRequiredCount());
+            snapshotRule.setItems(snapshotItems);
+            snapshotRules.add(snapshotRule);
         }
 
-        comboSnapshot.setGroups(snapshotGroups);
+        comboSnapshot.setRules(snapshotRules);
 
         PreparedOrderItem preparedItem = new PreparedOrderItem();
         preparedItem.setDish(comboDish);
@@ -951,60 +1079,36 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return preparedItem;
     }
 
-    private Map<Long, ComboConfig.Option> buildOptionMap(ComboConfig.Group group) {
-        if (group == null || group.getOptions() == null) {
-            return Collections.emptyMap();
-        }
-        return group.getOptions().stream()
-                .filter(Objects::nonNull)
-                .filter(option -> option.getDishId() != null)
-                .collect(Collectors.toMap(
-                        ComboConfig.Option::getDishId,
-                        option -> option,
-                        (left, right) -> left,
-                        LinkedHashMap::new
-                ));
-    }
-
     private CreateOrderDTO.ComboSelectionGroupDTO resolveSelectionGroup(List<CreateOrderDTO.ComboSelectionGroupDTO> selections,
-                                                                        int groupIndex,
-                                                                        String groupName) {
+                                                                        Long categoryId,
+                                                                        String categoryName) {
         if (selections == null || selections.isEmpty()) {
             return null;
         }
 
         for (CreateOrderDTO.ComboSelectionGroupDTO selection : selections) {
-            if (selection != null && selection.getGroupIndex() != null && selection.getGroupIndex() == groupIndex) {
+            if (selection != null && categoryId != null && Objects.equals(selection.getCategoryId(), categoryId)) {
                 return selection;
             }
         }
         for (CreateOrderDTO.ComboSelectionGroupDTO selection : selections) {
             if (selection != null
-                    && StringUtils.hasText(selection.getName())
-                    && selection.getName().trim().equals(groupName)) {
+                    && StringUtils.hasText(selection.getCategoryName())
+                    && selection.getCategoryName().trim().equals(categoryName)) {
                 return selection;
-            }
-        }
-        if (groupIndex >= 0 && groupIndex < selections.size()) {
-            CreateOrderDTO.ComboSelectionGroupDTO fallback = selections.get(groupIndex);
-            if (fallback != null && fallback.getGroupIndex() == null) {
-                return fallback;
             }
         }
         return null;
     }
 
-    private void validateSelectionCount(ComboConfig.Group group, int selectedCount) {
-        int minSelect = group.getMinSelect() == null ? 0 : group.getMinSelect();
-        int maxSelect = group.getMaxSelect() == null ? 0 : group.getMaxSelect();
-        if (selectedCount < minSelect) {
-            throw new BusinessException(400, "套餐分组“" + group.getName() + "”至少选择 " + minSelect + " 项");
-        }
-        if (maxSelect > 0 && selectedCount > maxSelect) {
-            throw new BusinessException(400, "套餐分组“" + group.getName() + "”最多选择 " + maxSelect + " 项");
+    private void validateSelectionCount(ComboConfig.Rule rule, int selectedCount) {
+        int requiredCount = rule.getRequiredCount() == null || rule.getRequiredCount() <= 0
+                ? 1
+                : rule.getRequiredCount();
+        if (selectedCount != requiredCount) {
+            throw new BusinessException(400, "套餐分类“" + rule.getCategoryName() + "”需要选择 " + requiredCount + " 项");
         }
     }
-
     private void reserveDishStock(Dish dish,
                                   int quantity,
                                   Map<Long, Integer> stockReservations,
@@ -1366,19 +1470,20 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     }
 
     private List<StudentOrderVO.ComboGroupVO> toComboGroups(ComboSnapshot comboSnapshot, Integer parentQuantity) {
-        if (comboSnapshot == null || comboSnapshot.getGroups() == null || comboSnapshot.getGroups().isEmpty()) {
+        if (comboSnapshot == null || comboSnapshot.getRules() == null || comboSnapshot.getRules().isEmpty()) {
             return Collections.emptyList();
         }
         int comboCount = parentQuantity == null || parentQuantity <= 0 ? 1 : parentQuantity;
         List<StudentOrderVO.ComboGroupVO> groups = new ArrayList<>();
-        for (ComboSnapshot.Group group : comboSnapshot.getGroups()) {
+        int index = 0;
+        for (ComboSnapshot.Rule group : comboSnapshot.getRules()) {
             StudentOrderVO.ComboGroupVO groupVO = new StudentOrderVO.ComboGroupVO();
-            groupVO.setGroupIndex(group.getGroupIndex());
-            groupVO.setName(group.getName());
+            groupVO.setGroupIndex(index++);
+            groupVO.setName(group.getCategoryName());
 
             List<StudentOrderVO.ComboOptionVO> optionVos = new ArrayList<>();
-            if (group.getOptions() != null) {
-                for (ComboSnapshot.Option option : group.getOptions()) {
+            if (group.getItems() != null) {
+                for (ComboSnapshot.Item option : group.getItems()) {
                     StudentOrderVO.ComboOptionVO optionVO = new StudentOrderVO.ComboOptionVO();
                     optionVO.setDishId(option.getDishId());
                     optionVO.setDishName(option.getDishName());
@@ -1417,15 +1522,15 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
 
     private void restoreComboItemStock(OrderItem item) {
         ComboSnapshot comboSnapshot = item.getComboSnapshot();
-        if (comboSnapshot == null || comboSnapshot.getGroups() == null) {
+        if (comboSnapshot == null || comboSnapshot.getRules() == null) {
             return;
         }
         int comboCount = item.getQuantity() == null ? 0 : item.getQuantity();
-        for (ComboSnapshot.Group group : comboSnapshot.getGroups()) {
-            if (group.getOptions() == null) {
+        for (ComboSnapshot.Rule group : comboSnapshot.getRules()) {
+            if (group.getItems() == null) {
                 continue;
             }
-            for (ComboSnapshot.Option option : group.getOptions()) {
+            for (ComboSnapshot.Item option : group.getItems()) {
                 if (option == null || option.getDishId() == null || option.getQuantity() == null || option.getQuantity() <= 0) {
                     continue;
                 }
@@ -1608,3 +1713,4 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
     }
 }
+

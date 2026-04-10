@@ -93,6 +93,7 @@ public class RegisterController {
         user.setPhone(phone);
         user.setPassword(BCrypt.hashpw(password, BCrypt.gensalt()));
         user.setOpenid("merchant_" + System.currentTimeMillis());
+        user.setNickname(storeName);
         user.setRole("merchant");
         user.setStatus("active");
         userMapper.insert(user);

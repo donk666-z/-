@@ -5,8 +5,8 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.campus.delivery.entity.Category;
 import com.campus.delivery.entity.Dish;
 import com.campus.delivery.mapper.CategoryMapper;
+import com.campus.delivery.mapper.DishMapper;
 import com.campus.delivery.service.CategoryService;
-import com.campus.delivery.service.DishService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,7 +17,7 @@ import java.util.List;
 @Service
 public class CategoryServiceImpl extends ServiceImpl<CategoryMapper, Category> implements CategoryService {
     @Autowired
-    private DishService dishService;
+    private DishMapper dishMapper;
 
     @Override
     public List<Category> listByMerchantId(Long merchantId) {
@@ -100,7 +100,7 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryMapper, Category> i
         LambdaQueryWrapper<Dish> dishWrapper = new LambdaQueryWrapper<>();
         dishWrapper.eq(Dish::getMerchantId, merchantId)
                 .eq(Dish::getCategoryId, categoryId);
-        long count = dishService.count(dishWrapper);
+        Long count = dishMapper.selectCount(dishWrapper);
         if (count > 0) {
             throw new IllegalArgumentException("\u5206\u7c7b\u4e0b\u4ecd\u6709\u83dc\u54c1\uff0c\u65e0\u6cd5\u5220\u9664");
         }

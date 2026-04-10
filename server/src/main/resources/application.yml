@@ -11,7 +11,7 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://localhost:3306/campus_delivery?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
-    password: 123456
+    password: 1234
   
   redis:
     host: localhost
@@ -45,8 +45,6 @@ mybatis-plus:
       logic-not-delete-value: 0
 
 jwt:
-  # HS256 的 Keys.hmacShaKeyFor(secretBytes) 要求密钥长度至少 256 bits(32字节)。
-  # 当前 secret 长度为 31 字节(248 bits) 会导致登录/鉴权时抛出异常。
   secret: campus_delivery_secret_key_20240
   expiration: 604800000
 

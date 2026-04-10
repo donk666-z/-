@@ -2,25 +2,25 @@ package com.campus.delivery.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.campus.delivery.entity.Category;
 import com.campus.delivery.entity.Dish;
 import com.campus.delivery.mapper.DishMapper;
 import com.campus.delivery.model.ComboConfig;
+import com.campus.delivery.service.CategoryService;
 import com.campus.delivery.service.DishService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -29,6 +29,12 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final int DEFAULT_COMBO_STOCK = 999;
+
+    private final CategoryService categoryService;
+
+    public DishServiceImpl(CategoryService categoryService) {
+        this.categoryService = categoryService;
+    }
 
     @Override
     public ComboConfig parseComboConfig(Dish dish) {
@@ -56,113 +62,72 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
 
     @Override
     public ComboConfig normalizeComboConfig(Long merchantId, ComboConfig comboConfig, Long currentDishId) {
-        if (comboConfig == null || comboConfig.getGroups() == null || comboConfig.getGroups().isEmpty()) {
-            throw new IllegalArgumentException("套餐至少需要一个分组");
+        if (comboConfig == null || comboConfig.getRules() == null || comboConfig.getRules().isEmpty()) {
+            throw new IllegalArgumentException("套餐至少需要一个分类规则");
         }
 
-        Set<Long> optionDishIds = new HashSet<>();
-        for (ComboConfig.Group group : comboConfig.getGroups()) {
-            if (group == null) {
-                continue;
-            }
-            if (group.getOptions() != null) {
-                for (ComboConfig.Option option : group.getOptions()) {
-                    if (option != null && option.getDishId() != null) {
-                        optionDishIds.add(option.getDishId());
-                    }
-                }
-            }
-        }
-        if (optionDishIds.isEmpty()) {
-            throw new IllegalArgumentException("套餐选项不能为空");
+        Set<Long> categoryIds = comboConfig.getRules().stream()
+                .filter(Objects::nonNull)
+                .map(ComboConfig.Rule::getCategoryId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (categoryIds.isEmpty()) {
+            throw new IllegalArgumentException("套餐分类规则不能为空");
         }
 
-        Map<Long, Dish> optionDishMap = listByIds(optionDishIds).stream()
-                .collect(Collectors.toMap(Dish::getId, dish -> dish, (left, right) -> left));
+        Map<Long, Category> categoryMap = categoryService.listByIds(categoryIds).stream()
+                .collect(Collectors.toMap(Category::getId, item -> item, (left, right) -> left));
 
         ComboConfig normalized = new ComboConfig();
-        List<ComboConfig.Group> groups = new ArrayList<>();
-        for (ComboConfig.Group rawGroup : comboConfig.getGroups()) {
-            if (rawGroup == null) {
+        List<ComboConfig.Rule> rules = new ArrayList<ComboConfig.Rule>();
+        for (ComboConfig.Rule rawRule : comboConfig.getRules()) {
+            if (rawRule == null) {
                 continue;
             }
 
-            String groupName = rawGroup.getName() == null ? null : rawGroup.getName().trim();
-            if (!StringUtils.hasText(groupName)) {
-                throw new IllegalArgumentException("套餐分组名称不能为空");
+            Long categoryId = rawRule.getCategoryId();
+            if (categoryId == null) {
+                throw new IllegalArgumentException("套餐分类不能为空");
             }
 
-            int minSelect = rawGroup.getMinSelect() == null ? 0 : rawGroup.getMinSelect();
-            int maxSelect = rawGroup.getMaxSelect() == null ? 0 : rawGroup.getMaxSelect();
-            if (minSelect < 0) {
-                throw new IllegalArgumentException("套餐最少可选数量不能小于 0");
-            }
-            if (maxSelect <= 0) {
-                throw new IllegalArgumentException("套餐最多可选数量必须大于 0");
-            }
-            if (maxSelect < minSelect) {
-                throw new IllegalArgumentException("套餐分组最多可选数量不能小于最少可选数量");
+            Category category = categoryMap.get(categoryId);
+            if (category == null || !merchantId.equals(category.getMerchantId())) {
+                throw new IllegalArgumentException("套餐分类不存在或不属于当前商家");
             }
 
-            if (rawGroup.getOptions() == null || rawGroup.getOptions().isEmpty()) {
-                throw new IllegalArgumentException("套餐分组“" + groupName + "”至少需要一个选项");
+            if (rules.stream().anyMatch(rule -> categoryId.equals(rule.getCategoryId()))) {
+                throw new IllegalArgumentException("同一个套餐内分类不能重复");
             }
 
-            Set<Long> seenDishIds = new HashSet<>();
-            List<ComboConfig.Option> normalizedOptions = new ArrayList<>();
-            for (ComboConfig.Option rawOption : rawGroup.getOptions()) {
-                if (rawOption == null || rawOption.getDishId() == null) {
-                    throw new IllegalArgumentException("套餐选项缺少菜品");
-                }
-                if (!seenDishIds.add(rawOption.getDishId())) {
-                    throw new IllegalArgumentException("套餐分组“" + groupName + "”存在重复菜品");
-                }
-
-                Dish optionDish = optionDishMap.get(rawOption.getDishId());
-                if (optionDish == null || !merchantId.equals(optionDish.getMerchantId())) {
-                    throw new IllegalArgumentException("套餐选项菜品不存在或不属于当前商家");
-                }
-                if (currentDishId != null && currentDishId.equals(optionDish.getId())) {
-                    throw new IllegalArgumentException("套餐不能引用自身");
-                }
-                String optionDishType = normalizeDishType(optionDish.getType());
-                if (TYPE_COMBO.equals(optionDishType)) {
-                    throw new IllegalArgumentException("套餐选项只能选择单品");
-                }
-
-                int quantity = rawOption.getQuantity() == null ? 1 : rawOption.getQuantity();
-                if (quantity <= 0) {
-                    throw new IllegalArgumentException("套餐选项数量必须大于 0");
-                }
-
-                BigDecimal extraPrice = rawOption.getExtraPrice() == null ? BigDecimal.ZERO : rawOption.getExtraPrice();
-                if (extraPrice.compareTo(BigDecimal.ZERO) < 0) {
-                    throw new IllegalArgumentException("套餐加价不能小于 0");
-                }
-
-                ComboConfig.Option option = new ComboConfig.Option();
-                option.setDishId(optionDish.getId());
-                option.setQuantity(quantity);
-                option.setExtraPrice(extraPrice);
-                normalizedOptions.add(option);
+            int requiredCount = rawRule.getRequiredCount() == null ? 1 : rawRule.getRequiredCount();
+            if (requiredCount <= 0) {
+                throw new IllegalArgumentException("套餐分类选择数量必须大于 0");
             }
 
-            if (minSelect > normalizedOptions.size()) {
-                throw new IllegalArgumentException("套餐分组“" + groupName + "”的最少选择数量超过了可选项数量");
+            LambdaQueryWrapper<Dish> wrapper = new LambdaQueryWrapper<Dish>();
+            wrapper.eq(Dish::getMerchantId, merchantId)
+                    .eq(Dish::getCategoryId, categoryId)
+                    .eq(Dish::getType, TYPE_SINGLE);
+            if (currentDishId != null) {
+                wrapper.ne(Dish::getId, currentDishId);
             }
 
-            ComboConfig.Group group = new ComboConfig.Group();
-            group.setName(groupName);
-            group.setMinSelect(minSelect);
-            group.setMaxSelect(maxSelect);
-            group.setOptions(normalizedOptions);
-            groups.add(group);
+            List<Dish> categoryDishes = list(wrapper);
+            long singleDishCount = categoryDishes.stream()
+                    .filter(dish -> TYPE_SINGLE.equals(normalizeDishType(dish.getType())))
+                    .count();
+            if (singleDishCount < requiredCount) {
+                throw new IllegalArgumentException("套餐分类“" + category.getName() + "”下可选单品不足");
+            }
+
+            ComboConfig.Rule rule = new ComboConfig.Rule();
+            rule.setCategoryId(categoryId);
+            rule.setCategoryName(category.getName());
+            rule.setRequiredCount(requiredCount);
+            rules.add(rule);
         }
 
-        if (groups.isEmpty()) {
-            throw new IllegalArgumentException("套餐至少需要一个有效分组");
-        }
-        normalized.setGroups(groups);
+        normalized.setRules(rules);
         return normalized;
     }
 
@@ -180,45 +145,48 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
             return dishes;
         }
 
-        Map<Long, ComboConfig> comboConfigMap = new HashMap<>();
-        Set<Long> optionDishIds = new HashSet<>();
+        Map<Long, ComboConfig> comboConfigMap = new HashMap<Long, ComboConfig>();
+        Set<Long> categoryIds = dishes.stream()
+                .peek(dish -> {
+                    dish.setType(normalizeDishType(dish.getType()));
+                    if (dish.getStock() == null) {
+                        dish.setStock(0);
+                    }
+                })
+                .filter(dish -> TYPE_COMBO.equals(dish.getType()))
+                .map(dish -> {
+                    ComboConfig comboConfig = parseComboConfig(dish);
+                    if (comboConfig == null) {
+                        comboConfig = new ComboConfig();
+                        comboConfig.setRules(new ArrayList<ComboConfig.Rule>());
+                    }
+                    comboConfigMap.put(dish.getId(), comboConfig);
+                    return comboConfig;
+                })
+                .flatMap(comboConfig -> safeRules(comboConfig).stream())
+                .map(ComboConfig.Rule::getCategoryId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        Map<Long, List<Dish>> dishesByCategory;
+        if (categoryIds.isEmpty()) {
+            dishesByCategory = Collections.emptyMap();
+        } else {
+            LambdaQueryWrapper<Dish> wrapper = new LambdaQueryWrapper<Dish>();
+            wrapper.in(Dish::getCategoryId, categoryIds)
+                    .eq(Dish::getType, TYPE_SINGLE);
+            dishesByCategory = list(wrapper).stream()
+                    .collect(Collectors.groupingBy(Dish::getCategoryId));
+        }
 
         for (Dish dish : dishes) {
-            dish.setType(normalizeDishType(dish.getType()));
-            if (dish.getStock() == null) {
-                dish.setStock(0);
-            }
             if (!TYPE_COMBO.equals(dish.getType())) {
                 dish.setComboConfig(null);
                 continue;
             }
 
-            ComboConfig comboConfig = parseComboConfig(dish);
-            if (comboConfig == null) {
-                comboConfig = new ComboConfig();
-                comboConfig.setGroups(new ArrayList<>());
-            }
-            comboConfigMap.put(dish.getId(), comboConfig);
-            for (ComboConfig.Group group : safeGroups(comboConfig)) {
-                for (ComboConfig.Option option : safeOptions(group)) {
-                    if (option.getDishId() != null) {
-                        optionDishIds.add(option.getDishId());
-                    }
-                }
-            }
-        }
-
-        Map<Long, Dish> optionDishMap = optionDishIds.isEmpty()
-                ? Collections.emptyMap()
-                : listByIds(optionDishIds).stream()
-                .collect(Collectors.toMap(Dish::getId, candidate -> candidate, (left, right) -> left));
-
-        for (Dish dish : dishes) {
-            if (!TYPE_COMBO.equals(dish.getType())) {
-                continue;
-            }
             ComboConfig comboConfig = comboConfigMap.get(dish.getId());
-            enrichComboConfig(comboConfig, optionDishMap);
+            enrichComboConfig(dish.getMerchantId(), comboConfig, dishesByCategory);
             dish.setComboConfig(comboConfig);
             dish.setStock(calculateComboDisplayStock(comboConfig));
         }
@@ -227,140 +195,99 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
 
     @Override
     public void ensureDishNotReferencedByCombo(Long merchantId, Long dishId, Long excludeDishId) {
-        if (merchantId == null || dishId == null) {
-            return;
-        }
-
-        LambdaQueryWrapper<Dish> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(Dish::getMerchantId, merchantId)
-                .eq(Dish::getType, TYPE_COMBO);
-        if (excludeDishId != null) {
-            wrapper.ne(Dish::getId, excludeDishId);
-        }
-
-        for (Dish comboDish : list(wrapper)) {
-            ComboConfig comboConfig = parseComboConfig(comboDish);
-            for (ComboConfig.Group group : safeGroups(comboConfig)) {
-                for (ComboConfig.Option option : safeOptions(group)) {
-                    if (dishId.equals(option.getDishId())) {
-                        throw new IllegalArgumentException("该单品已被套餐引用，请先调整套餐配置");
-                    }
-                }
-            }
-        }
+        // 套餐改为按分类选品后，不再直接引用单品。
     }
 
-    private void enrichComboConfig(ComboConfig comboConfig, Map<Long, Dish> optionDishMap) {
+    private void enrichComboConfig(Long merchantId, ComboConfig comboConfig, Map<Long, List<Dish>> dishesByCategory) {
         if (comboConfig == null) {
             return;
         }
-        for (ComboConfig.Group group : safeGroups(comboConfig)) {
-            for (ComboConfig.Option option : safeOptions(group)) {
-                Dish optionDish = optionDishMap.get(option.getDishId());
-                if (optionDish == null) {
-                    option.setAvailable(false);
-                    continue;
-                }
-                option.setDishName(optionDish.getName());
-                option.setDishImage(optionDish.getImage());
-                option.setDishPrice(optionDish.getPrice());
-                option.setDishStock(optionDish.getStock());
-                option.setDishStatus(optionDish.getStatus());
-                option.setDishType(normalizeDishType(optionDish.getType()));
-                option.setAvailable(isOptionAvailable(optionDish, option));
+
+        for (ComboConfig.Rule rule : safeRules(comboConfig)) {
+            List<Dish> categoryDishes = dishesByCategory.getOrDefault(rule.getCategoryId(), Collections.<Dish>emptyList());
+            List<ComboConfig.Item> items = categoryDishes.stream()
+                    .filter(item -> merchantId.equals(item.getMerchantId()))
+                    .filter(item -> TYPE_SINGLE.equals(normalizeDishType(item.getType())))
+                    .map(item -> {
+                        ComboConfig.Item comboItem = new ComboConfig.Item();
+                        comboItem.setDishId(item.getId());
+                        comboItem.setDishName(item.getName());
+                        comboItem.setDishImage(item.getImage());
+                        comboItem.setDishPrice(item.getPrice());
+                        comboItem.setDishStock(item.getStock() == null ? 0 : item.getStock());
+                        comboItem.setDishStatus(item.getStatus());
+                        comboItem.setDishType(normalizeDishType(item.getType()));
+                        comboItem.setAvailable("available".equals(item.getStatus()) && (item.getStock() == null || item.getStock() > 0));
+                        return comboItem;
+                    })
+                    .collect(Collectors.toList());
+            rule.setItems(items);
+            if (!StringUtils.hasText(rule.getCategoryName())) {
+                Category category = categoryService.getById(rule.getCategoryId());
+                rule.setCategoryName(category == null ? "" : category.getName());
             }
         }
-    }
-
-    private boolean isOptionAvailable(Dish optionDish, ComboConfig.Option option) {
-        if (optionDish == null || option == null) {
-            return false;
-        }
-        if (!TYPE_SINGLE.equals(normalizeDishType(optionDish.getType()))) {
-            return false;
-        }
-        if (!"available".equals(optionDish.getStatus())) {
-            return false;
-        }
-        int required = option.getQuantity() == null || option.getQuantity() <= 0 ? 1 : option.getQuantity();
-        int stock = optionDish.getStock() == null ? 0 : optionDish.getStock();
-        return stock >= required;
     }
 
     private int calculateComboDisplayStock(ComboConfig comboConfig) {
-        if (comboConfig == null || comboConfig.getGroups() == null || comboConfig.getGroups().isEmpty()) {
-            return 0;
+        if (comboConfig == null || comboConfig.getRules() == null || comboConfig.getRules().isEmpty()) {
+            return DEFAULT_COMBO_STOCK;
         }
 
         Integer finalStock = null;
-        boolean hasRequiredGroup = false;
-        for (ComboConfig.Group group : comboConfig.getGroups()) {
-            int minSelect = group.getMinSelect() == null ? 0 : group.getMinSelect();
-            int groupStock = calculateGroupDisplayStock(group);
-            if (minSelect > 0) {
-                hasRequiredGroup = true;
-                finalStock = finalStock == null ? groupStock : Math.min(finalStock, groupStock);
-            }
+        for (ComboConfig.Rule rule : comboConfig.getRules()) {
+            int ruleStock = calculateRuleDisplayStock(rule);
+            finalStock = finalStock == null ? ruleStock : Math.min(finalStock, ruleStock);
         }
-
-        if (!hasRequiredGroup) {
-            return DEFAULT_COMBO_STOCK;
-        }
-        if (finalStock == null || finalStock <= 0) {
-            return 0;
-        }
-        return Math.min(finalStock, DEFAULT_COMBO_STOCK);
+        return finalStock == null ? DEFAULT_COMBO_STOCK : Math.max(finalStock, 0);
     }
 
-    private int calculateGroupDisplayStock(ComboConfig.Group group) {
-        if (group == null) {
+    private int calculateRuleDisplayStock(ComboConfig.Rule rule) {
+        if (rule == null) {
             return 0;
         }
-        int minSelect = group.getMinSelect() == null ? 0 : group.getMinSelect();
-        if (minSelect <= 0) {
+
+        int requiredCount = rule.getRequiredCount() == null ? 1 : rule.getRequiredCount();
+        if (requiredCount <= 0) {
             return DEFAULT_COMBO_STOCK;
         }
 
-        int selectableOptionCount = 0;
         int totalCapacity = 0;
-        for (ComboConfig.Option option : safeOptions(group)) {
-            if (!Boolean.TRUE.equals(option.getAvailable())) {
+        int selectableCount = 0;
+        for (ComboConfig.Item item : safeItems(rule)) {
+            if (!Boolean.TRUE.equals(item.getAvailable())) {
                 continue;
             }
-            int quantity = option.getQuantity() == null || option.getQuantity() <= 0 ? 1 : option.getQuantity();
-            int stock = option.getDishStock() == null ? 0 : option.getDishStock();
-            int capacity = stock / quantity;
-            if (capacity > 0) {
-                selectableOptionCount++;
-                totalCapacity += capacity;
+            int stock = item.getDishStock() == null ? 0 : item.getDishStock();
+            if (stock <= 0) {
+                continue;
             }
+            selectableCount++;
+            totalCapacity += stock;
         }
 
-        if (selectableOptionCount < minSelect) {
+        if (selectableCount < requiredCount) {
             return 0;
         }
-
-        int estimatedStock = totalCapacity / minSelect;
-        return Math.max(estimatedStock, 1);
+        return Math.max(totalCapacity / requiredCount, 0);
     }
 
-    private List<ComboConfig.Group> safeGroups(ComboConfig comboConfig) {
-        return comboConfig == null || comboConfig.getGroups() == null
-                ? Collections.emptyList()
-                : comboConfig.getGroups();
+    private List<ComboConfig.Rule> safeRules(ComboConfig comboConfig) {
+        return comboConfig == null || comboConfig.getRules() == null
+                ? Collections.<ComboConfig.Rule>emptyList()
+                : comboConfig.getRules();
     }
 
-    private List<ComboConfig.Option> safeOptions(ComboConfig.Group group) {
-        return group == null || group.getOptions() == null
-                ? Collections.emptyList()
-                : group.getOptions();
+    private List<ComboConfig.Item> safeItems(ComboConfig.Rule rule) {
+        return rule == null || rule.getItems() == null
+                ? Collections.<ComboConfig.Item>emptyList()
+                : rule.getItems();
     }
 
     private String normalizeDishType(String rawType) {
-        if (!StringUtils.hasText(rawType)) {
-            return TYPE_SINGLE;
+        if (TYPE_COMBO.equalsIgnoreCase(rawType)) {
+            return TYPE_COMBO;
         }
-        String normalized = rawType.trim().toLowerCase(Locale.ROOT);
-        return TYPE_COMBO.equals(normalized) ? TYPE_COMBO : TYPE_SINGLE;
+        return TYPE_SINGLE;
     }
 }

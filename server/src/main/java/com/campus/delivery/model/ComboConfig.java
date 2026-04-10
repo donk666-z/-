@@ -11,27 +11,26 @@ import java.util.List;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class ComboConfig implements Serializable {
 
-    private List<Group> groups;
+    private List<Rule> rules;
 
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class Group implements Serializable {
-        private String name;
-        private Integer minSelect;
-        private Integer maxSelect;
-        private List<Option> options;
+    public static class Rule implements Serializable {
+        private Long categoryId;
+        private String categoryName;
+        private Integer requiredCount;
+        private BigDecimal extraPrice;
+        private List<Item> items;
     }
 
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class Option implements Serializable {
+    public static class Item implements Serializable {
         private Long dishId;
-        private Integer quantity;
-        private BigDecimal extraPrice;
-
         private String dishName;
         private String dishImage;
         private BigDecimal dishPrice;
+        private BigDecimal extraPrice;
         private Integer dishStock;
         private String dishStatus;
         private String dishType;

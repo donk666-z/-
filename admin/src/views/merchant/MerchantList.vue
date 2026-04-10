@@ -6,7 +6,7 @@
         <el-select v-model="query.status" placeholder="状态筛选" clearable style="width: 140px" @change="fetchData">
           <el-option label="营业中" value="open" />
           <el-option label="打烊" value="closed" />
-          <el-option label="繁忙" value="busy" />
+<!--          <el-option label="繁忙" value="busy" />-->
         </el-select>
         <el-button type="primary" @click="fetchData">搜索</el-button>
       </div>
@@ -25,7 +25,7 @@
         <el-table-column label="操作" width="180">
           <template #default="{ row }">
             <el-button v-if="row.status !== 'open'" type="success" text size="small" @click="handleStatus(row, 'open')">设为营业</el-button>
-            <el-button v-if="row.status !== 'busy'" type="warning" text size="small" @click="handleStatus(row, 'busy')">设为繁忙</el-button>
+<!--            <el-button v-if="row.status !== 'busy'" type="warning" text size="small" @click="handleStatus(row, 'busy')">设为繁忙</el-button>-->
             <el-button v-if="row.status !== 'closed'" type="danger" text size="small" @click="handleStatus(row, 'closed')">设为打烊</el-button>
           </template>
         </el-table-column>
@@ -50,7 +50,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 const statusText = {
   open: '营业中',
   closed: '打烊',
-  busy: '繁忙'
+  // busy: '繁忙'
 }
 const statusType = {
   open: 'success',

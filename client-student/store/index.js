@@ -1,4 +1,4 @@
-import Vue from 'vue'
+﻿import Vue from 'vue'
 import Vuex from 'vuex'
 
 Vue.use(Vuex)
@@ -14,11 +14,12 @@ const normalizeComboSelections = (comboSelections) => {
   }
 
   return comboSelections
-    .map((group, groupIndex) => {
+    .map((group) => {
       if (!group) {
         return null
       }
 
+      const categoryId = group.categoryId !== undefined && group.categoryId !== null ? Number(group.categoryId) : null
       const options = Array.isArray(group.options)
         ? group.options
             .map((option) => {
@@ -38,19 +39,27 @@ const normalizeComboSelections = (comboSelections) => {
         : []
 
       return {
-        groupIndex: group.groupIndex !== undefined && group.groupIndex !== null ? Number(group.groupIndex) : groupIndex,
-        name: group.name || '',
+        categoryId,
+        categoryName: group.categoryName || group.name || '',
+        requiredCount: Math.max(1, toNumber(group.requiredCount) || 1),
         options
       }
     })
     .filter(Boolean)
-    .sort((left, right) => left.groupIndex - right.groupIndex)
+    .sort((left, right) => {
+      const leftId = left.categoryId === null ? Number.MAX_SAFE_INTEGER : left.categoryId
+      const rightId = right.categoryId === null ? Number.MAX_SAFE_INTEGER : right.categoryId
+      if (leftId === rightId) {
+        return String(left.categoryName || '').localeCompare(String(right.categoryName || ''))
+      }
+      return leftId - rightId
+    })
 }
 
 const buildSelectionSignature = (comboSelections) => {
   return JSON.stringify(
     normalizeComboSelections(comboSelections).map((group) => ({
-      groupIndex: group.groupIndex,
+      categoryId: group.categoryId,
       options: group.options.map((option) => ({
         dishId: option.dishId,
         quantity: option.quantity
@@ -64,7 +73,7 @@ const buildComboSummary = (comboSelections) => {
     .filter((group) => Array.isArray(group.options) && group.options.length > 0)
     .map((group) => {
       const optionNames = group.options.map((option) => option.dishName).filter(Boolean).join('、')
-      return `${group.name || '已选'}: ${optionNames}`
+      return `${group.categoryName || '已选分类'}: ${optionNames}`
     })
     .join('；')
 }

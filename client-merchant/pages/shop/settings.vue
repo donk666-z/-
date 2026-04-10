@@ -3,21 +3,24 @@
     <view class="hero-card">
       <view class="hero-top">
         <view>
-          <text class="hero-tag">商户后台</text>
-          <text class="hero-title">{{ form.name || '请先完善店铺信息' }}</text>
-          <text class="hero-desc">{{ shopOpen ? '当前正在营业，可正常接收新订单。' : '当前已打烊，学生端会显示休息中。' }}</text>
+          <text class="hero-tag">{{ copy.heroTag }}</text>
+          <text class="hero-title">{{ form.name || copy.emptyShopName }}</text>
+          <text class="hero-desc">{{ shopOpen ? copy.heroOpenDesc : copy.heroClosedDesc }}</text>
         </view>
-        <view class="hero-mark">{{ shopInitial }}</view>
+        <view class="hero-mark upload-trigger" @click="chooseLogo">
+          <image v-if="form.logo" :src="form.logo" class="hero-logo" mode="aspectFill"></image>
+          <text v-else>{{ shopInitial }}</text>
+        </view>
       </view>
 
       <view class="hero-meta">
         <view class="meta-pill">
           <u-icon name="clock" size="24" color="#ff7a00"></u-icon>
-          <text>{{ form.businessHours || '待设置营业时间' }}</text>
+          <text>{{ form.businessHours || copy.businessHoursPlaceholder }}</text>
         </view>
         <view class="meta-pill">
           <u-icon name="phone" size="24" color="#ff7a00"></u-icon>
-          <text>{{ form.phone || '待填写联系电话' }}</text>
+          <text>{{ form.phone || copy.phonePlaceholder }}</text>
         </view>
       </view>
     </view>
@@ -25,9 +28,9 @@
     <view class="panel status-panel">
       <view class="panel-header">
         <view>
-          <text class="panel-tag">营业管理</text>
-          <text class="panel-title">店铺状态</text>
-          <text class="panel-desc">切换后会同步影响学生端展示和下单流程。</text>
+          <text class="panel-tag">{{ copy.statusTag }}</text>
+          <text class="panel-title">{{ copy.statusTitle }}</text>
+          <text class="panel-desc">{{ copy.statusDesc }}</text>
         </view>
         <view class="status-side">
           <text :class="['status-badge', shopOpen ? 'open' : 'closed']">{{ statusText }}</text>
@@ -50,13 +53,13 @@
     <view class="panel info-panel">
       <view class="panel-header stacked">
         <view>
-          <text class="panel-tag">基础资料</text>
-          <text class="panel-title">店铺信息</text>
-          <text class="panel-desc">信息越完整，用户越容易信任并完成下单。</text>
+          <text class="panel-tag">{{ copy.infoTag }}</text>
+          <text class="panel-title">{{ copy.infoTitle }}</text>
+          <text class="panel-desc">{{ copy.infoDesc }}</text>
         </view>
         <view class="progress-box">
           <view class="progress-label">
-            <text>资料完整度</text>
+            <text>{{ copy.completionLabel }}</text>
             <text>{{ completionPercent }}%</text>
           </view>
           <view class="progress-track">
@@ -67,91 +70,105 @@
 
       <view class="field-card">
         <view class="field-head">
-          <text class="field-label required">店铺名称</text>
-          <text class="field-tip">展示在首页和订单页</text>
+          <text class="field-label">{{ copy.logoLabel }}</text>
+          <text class="field-tip">{{ copy.logoTip }}</text>
+        </view>
+        <view class="logo-upload" @click="chooseLogo">
+          <image v-if="form.logo" :src="form.logo" class="logo-preview" mode="aspectFill"></image>
+          <view v-else class="logo-placeholder">
+            <u-icon name="camera" size="34" color="#ff7a00"></u-icon>
+            <text class="logo-placeholder-text">{{ copy.logoUploadText }}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="field-card">
+        <view class="field-head">
+          <text class="field-label required">{{ copy.nameLabel }}</text>
+          <text class="field-tip">{{ copy.nameTip }}</text>
         </view>
         <input
           v-model="form.name"
           class="text-input"
           maxlength="20"
-          placeholder="请输入店铺名称"
+          :placeholder="copy.nameInputPlaceholder"
           placeholder-class="input-placeholder"
         />
       </view>
 
       <view class="field-card">
         <view class="field-head">
-          <text class="field-label">店铺描述</text>
-          <text class="field-tip">一句话介绍口味或特色</text>
+          <text class="field-label">{{ copy.descriptionLabel }}</text>
+          <text class="field-tip">{{ copy.descriptionTip }}</text>
         </view>
         <textarea
           v-model="form.description"
           class="textarea-input"
           maxlength="120"
           auto-height
-          placeholder="例如：现做轻食、低脂高蛋白、支持加料定制"
+          :placeholder="copy.descriptionInputPlaceholder"
           placeholder-class="input-placeholder"
         ></textarea>
       </view>
 
       <view class="field-card">
         <view class="field-head">
-          <text class="field-label required">联系电话</text>
-          <text class="field-tip">便于用户和骑手联系</text>
+          <text class="field-label required">{{ copy.contactLabel }}</text>
+          <text class="field-tip">{{ copy.contactTip }}</text>
         </view>
         <input
           v-model="form.phone"
           class="text-input"
           type="number"
           maxlength="20"
-          placeholder="请输入联系电话"
+          :placeholder="copy.contactInputPlaceholder"
           placeholder-class="input-placeholder"
         />
       </view>
 
       <view class="field-card">
         <view class="field-head">
-          <text class="field-label">营业时间</text>
-          <text class="field-tip">建议格式：08:00-21:00</text>
+          <text class="field-label">{{ copy.hoursLabel }}</text>
+          <text class="field-tip">{{ copy.hoursTip }}</text>
         </view>
         <input
           v-model="form.businessHours"
           class="text-input"
           maxlength="30"
-          placeholder="请输入营业时间"
+          :placeholder="copy.hoursInputPlaceholder"
           placeholder-class="input-placeholder"
         />
       </view>
 
       <view class="field-card">
         <view class="field-head">
-          <text class="field-label">店铺地址</text>
-          <text class="field-tip">用于订单配送和店铺展示</text>
+          <text class="field-label">{{ copy.addressLabel }}</text>
+          <text class="field-tip">{{ copy.addressTip }}</text>
         </view>
         <textarea
           v-model="form.address"
           class="textarea-input short"
           maxlength="120"
           auto-height
-          placeholder="请输入店铺详细地址"
+          :placeholder="copy.addressInputPlaceholder"
           placeholder-class="input-placeholder"
         ></textarea>
       </view>
     </view>
 
     <view class="panel tips-panel">
-      <text class="tips-title">经营小提示</text>
+      <text class="tips-title">{{ copy.tipsTitle }}</text>
       <view class="tip-row">
         <text class="tip-dot"></text>
-        <text class="tip-text">营业时间建议与实际接单时间保持一致，避免用户下单后无法履约。</text>
+        <text class="tip-text">{{ copy.tipBusinessHours }}</text>
       </view>
       <view class="tip-row">
         <text class="tip-dot"></text>
-        <text class="tip-text">联系电话建议填写常用手机，方便骑手联系与异常订单处理。</text>
+        <text class="tip-text">{{ copy.tipPhone }}</text>
       </view>
       <view class="tip-row">
         <text class="tip-dot"></text>
-        <text class="tip-text">店铺描述可以突出招牌菜、口味风格和配送优势。</text>
+        <text class="tip-text">{{ copy.tipDescription }}</text>
       </view>
     </view>
 
@@ -163,7 +180,7 @@
         :loading="loading"
         @click="handleSave"
       >
-        保存设置
+        {{ copy.saveButton }}
       </u-button>
       <u-button
         plain
@@ -171,7 +188,7 @@
         :customStyle="logoutButtonStyle"
         @click="handleLogout"
       >
-        退出登录
+        {{ copy.logoutButton }}
       </u-button>
     </view>
   </view>
@@ -180,6 +197,8 @@
 <script>
 import { getShopInfo, updateShopInfo, updateStatus } from '@/api/shop'
 import merchantRealtime from '@/utils/merchant-realtime'
+import { UPLOAD_URL } from '@/config/api'
+import { handleUnauthorized } from '@/utils/session'
 
 export default {
   data() {
@@ -188,7 +207,68 @@ export default {
       statusLoading: false,
       shopOpen: true,
       merchantSnapshot: {},
+      copy: {
+        heroTag: '\u5546\u6237\u540e\u53f0',
+        emptyShopName: '\u8bf7\u5148\u5b8c\u5584\u5e97\u94fa\u4fe1\u606f',
+        heroOpenDesc: '\u5f53\u524d\u6b63\u5728\u8425\u4e1a\uff0c\u53ef\u6b63\u5e38\u63a5\u6536\u65b0\u8ba2\u5355\u3002',
+        heroClosedDesc: '\u5f53\u524d\u5df2\u6253\u70ca\uff0c\u5b66\u751f\u7aef\u4f1a\u663e\u793a\u4f11\u606f\u4e2d\u3002',
+        businessHoursPlaceholder: '\u5f85\u8bbe\u7f6e\u8425\u4e1a\u65f6\u95f4',
+        phonePlaceholder: '\u5f85\u586b\u5199\u8054\u7cfb\u7535\u8bdd',
+        statusTag: '\u8425\u4e1a\u7ba1\u7406',
+        statusTitle: '\u5e97\u94fa\u72b6\u6001',
+        statusDesc: '\u5207\u6362\u540e\u4f1a\u540c\u6b65\u5f71\u54cd\u5b66\u751f\u7aef\u5c55\u793a\u548c\u4e0b\u5355\u6d41\u7a0b\u3002',
+        infoTag: '\u57fa\u7840\u8d44\u6599',
+        infoTitle: '\u5e97\u94fa\u4fe1\u606f',
+        infoDesc: '\u4fe1\u606f\u8d8a\u5b8c\u6574\uff0c\u7528\u6237\u8d8a\u5bb9\u6613\u4fe1\u4efb\u5e76\u5b8c\u6210\u4e0b\u5355\u3002',
+        completionLabel: '\u8d44\u6599\u5b8c\u6574\u5ea6',
+        logoLabel: '\u5e97\u94fa\u5934\u50cf',
+        logoTip: '\u5efa\u8bae\u4e0a\u4f20\u6e05\u6670\u65b9\u5f62\u56fe\u7247',
+        logoUploadText: '\u4e0a\u4f20\u5e97\u94fa\u5934\u50cf',
+        nameLabel: '\u5e97\u94fa\u540d\u79f0',
+        nameTip: '\u5c55\u793a\u5728\u9996\u9875\u548c\u8ba2\u5355\u9875',
+        nameInputPlaceholder: '\u8bf7\u8f93\u5165\u5e97\u94fa\u540d\u79f0',
+        descriptionLabel: '\u5e97\u94fa\u63cf\u8ff0',
+        descriptionTip: '\u4e00\u53e5\u8bdd\u4ecb\u7ecd\u53e3\u5473\u6216\u7279\u8272',
+        descriptionInputPlaceholder: '\u4f8b\u5982\uff1a\u73b0\u505a\u8f7b\u98df\u3001\u4f4e\u8102\u9ad8\u86cb\u767d\u3001\u652f\u6301\u52a0\u6599\u5b9a\u5236',
+        contactLabel: '\u8054\u7cfb\u7535\u8bdd',
+        contactTip: '\u4fbf\u4e8e\u7528\u6237\u548c\u9a91\u624b\u8054\u7cfb',
+        contactInputPlaceholder: '\u8bf7\u8f93\u5165\u8054\u7cfb\u7535\u8bdd',
+        hoursLabel: '\u8425\u4e1a\u65f6\u95f4',
+        hoursTip: '\u5efa\u8bae\u683c\u5f0f\uff1a8:00-21:00',
+        hoursInputPlaceholder: '\u8bf7\u8f93\u5165\u8425\u4e1a\u65f6\u95f4',
+        addressLabel: '\u5e97\u94fa\u5730\u5740',
+        addressTip: '\u7528\u4e8e\u8ba2\u5355\u914d\u9001\u548c\u5e97\u94fa\u5c55\u793a',
+        addressInputPlaceholder: '\u8bf7\u8f93\u5165\u5e97\u94fa\u8be6\u7ec6\u5730\u5740',
+        tipsTitle: '\u7ecf\u8425\u5c0f\u63d0\u793a',
+        tipBusinessHours: '\u8425\u4e1a\u65f6\u95f4\u5efa\u8bae\u4e0e\u5b9e\u9645\u63a5\u5355\u65f6\u95f4\u4fdd\u6301\u4e00\u81f4\uff0c\u907f\u514d\u7528\u6237\u4e0b\u5355\u540e\u65e0\u6cd5\u5c65\u7ea6\u3002',
+        tipPhone: '\u8054\u7cfb\u7535\u8bdd\u5efa\u8bae\u586b\u5199\u5e38\u7528\u624b\u673a\uff0c\u65b9\u4fbf\u9a91\u624b\u8054\u7cfb\u4e0e\u5f02\u5e38\u8ba2\u5355\u5904\u7406\u3002',
+        tipDescription: '\u5e97\u94fa\u63cf\u8ff0\u53ef\u4ee5\u7a81\u51fa\u62db\u724c\u83dc\u54c1\u3001\u53e3\u5473\u98ce\u683c\u548c\u914d\u9001\u4f18\u52bf\u3002',
+        saveButton: '\u4fdd\u5b58\u8bbe\u7f6e',
+        logoutButton: '\u9000\u51fa\u767b\u5f55',
+        statusOpen: '\u8425\u4e1a\u4e2d',
+        statusClosed: '\u4f11\u606f\u4e2d',
+        statusOpenNote: '\u5f53\u524d\u5e97\u94fa\u5bf9\u7528\u6237\u53ef\u89c1\uff0c\u5546\u54c1\u4f1a\u6b63\u5e38\u5c55\u793a\uff0c\u65b0\u7684\u8ba2\u5355\u4f1a\u8fdb\u5165\u5f85\u63a5\u5355\u5217\u8868\u3002',
+        statusClosedNote: '\u6253\u70ca\u540e\u7528\u6237\u4ecd\u53ef\u6d4f\u89c8\u5e97\u94fa\u4fe1\u606f\uff0c\u4f46\u65e0\u6cd5\u7ee7\u7eed\u4e0b\u5355\uff0c\u8bf7\u5728\u6062\u590d\u8425\u4e1a\u65f6\u91cd\u65b0\u5f00\u542f\u3002',
+        initialFallback: '\u5e97',
+        loginRequired: '\u8bf7\u5148\u767b\u5f55',
+        accountDisabled: '\u8d26\u53f7\u5df2\u88ab\u7981\u7528\uff0c\u8bf7\u91cd\u65b0\u767b\u5f55',
+        uploadFailed: '\u4e0a\u4f20\u5931\u8d25',
+        logoutTitle: '\u9000\u51fa\u767b\u5f55',
+        logoutContent: '\u786e\u5b9a\u8981\u9000\u51fa\u5f53\u524d\u5546\u6237\u8d26\u53f7\u5417\uff1f',
+        loadFailed: '\u52a0\u8f7d\u5e97\u94fa\u4fe1\u606f\u5931\u8d25',
+        switchedOpen: '\u5e97\u94fa\u5df2\u5f00\u59cb\u8425\u4e1a',
+        switchedClosed: '\u5e97\u94fa\u5df2\u5207\u6362\u4e3a\u4f11\u606f\u4e2d',
+        updateStatusFailed: '\u66f4\u65b0\u5e97\u94fa\u72b6\u6001\u5931\u8d25',
+        nameRequired: '\u8bf7\u586b\u5199\u5e97\u94fa\u540d\u79f0',
+        phoneRequired: '\u8bf7\u586b\u5199\u8054\u7cfb\u7535\u8bdd',
+        phoneInvalid: '\u8bf7\u586b\u5199\u6b63\u786e\u7684 11 \u4f4d\u624b\u673a\u53f7',
+        hoursInvalid: '\u8425\u4e1a\u65f6\u95f4\u8bf7\u586b\u5199\u4e3a 8:00-21:00 \u8fd9\u7c7b\u683c\u5f0f',
+        saveLog: '\u4fdd\u5b58\u5e97\u94fa\u8bbe\u7f6e\uff0c\u8bf7\u6c42\u53c2\u6570\uff1a',
+        saveSuccess: '\u5e97\u94fa\u8bbe\u7f6e\u5df2\u4fdd\u5b58',
+        saveFailed: '\u4fdd\u5b58\u5e97\u94fa\u8bbe\u7f6e\u5931\u8d25'
+      },
       form: {
+        logo: '',
         name: '',
         description: '',
         phone: '',
@@ -199,27 +279,26 @@ export default {
   },
   computed: {
     statusText() {
-      return this.shopOpen ? '营业中' : '休息中'
+      return this.shopOpen ? this.copy.statusOpen : this.copy.statusClosed
     },
     statusNote() {
-      return this.shopOpen
-        ? '当前店铺对用户可见，商品会正常展示，新的订单会进入待接单列表。'
-        : '打烊后用户仍可浏览店铺信息，但无法继续下单，请在恢复营业时重新开启。'
+      return this.shopOpen ? this.copy.statusOpenNote : this.copy.statusClosedNote
     },
     completionPercent() {
       const fields = [
+        this.form.logo,
         this.form.name,
         this.form.description,
         this.form.phone,
         this.form.businessHours,
         this.form.address
       ]
-      const filledCount = fields.filter(item => this.safeTrim(item)).length
+      const filledCount = fields.filter((item) => this.safeTrim(item)).length
       return Math.round((filledCount / fields.length) * 100)
     },
     shopInitial() {
       const name = this.safeTrim(this.form.name)
-      return name ? name.slice(0, 1) : '店'
+      return name ? name.slice(0, 1) : this.copy.initialFallback
     },
     saveButtonStyle() {
       return {
@@ -259,6 +338,7 @@ export default {
     normalizeForm(data) {
       return {
         name: this.safeTrim(data && data.name),
+        logo: this.safeTrim(data && data.logo),
         description: this.safeTrim(data && data.description),
         phone: this.safeTrim(data && data.phone),
         businessHours: this.normalizeBusinessHours(data && data.businessHours),
@@ -270,9 +350,9 @@ export default {
       if (!text) {
         return ''
       }
-      const match = text.match(/^(\d{1,2})[:：](\d{2})\s*[-~至到]+\s*(\d{1,2})[:：](\d{2})$/)
+      const match = text.match(/^(\d{1,2}):(\d{2})\s*[-~]+\s*(\d{1,2}):(\d{2})$/)
       if (!match) {
-        return text.replace(/[：]/g, ':').replace(/\s+/g, '')
+        return text.replace(/\s+/g, '')
       }
       const startHour = match[1].padStart(2, '0')
       const startMinute = match[2]
@@ -280,10 +360,48 @@ export default {
       const endMinute = match[4]
       return `${startHour}:${startMinute}-${endHour}:${endMinute}`
     },
+    chooseLogo() {
+      uni.chooseImage({
+        count: 1,
+        sizeType: ['compressed'],
+        success: (res) => {
+          const tempPath = res.tempFilePaths[0]
+          uni.uploadFile({
+            url: UPLOAD_URL,
+            filePath: tempPath,
+            name: 'file',
+            header: {
+              Authorization: `Bearer ${uni.getStorageSync('token')}`
+            },
+            success: (uploadRes) => {
+              if (uploadRes.statusCode === 401) {
+                uni.showToast({ title: this.copy.loginRequired, icon: 'none' })
+                handleUnauthorized()
+                return
+              }
+              if (uploadRes.statusCode === 403) {
+                uni.showToast({ title: this.copy.accountDisabled, icon: 'none' })
+                handleUnauthorized()
+                return
+              }
+              const data = JSON.parse(uploadRes.data || '{}')
+              if (data.code === 0) {
+                this.form.logo = (data.data && data.data.url) || data.data || ''
+                return
+              }
+              uni.showToast({ title: data.message || this.copy.uploadFailed, icon: 'none' })
+            },
+            fail: () => {
+              uni.showToast({ title: this.copy.uploadFailed, icon: 'none' })
+            }
+          })
+        }
+      })
+    },
     handleLogout() {
       uni.showModal({
-        title: '退出登录',
-        content: '确定要退出当前商户账号吗？',
+        title: this.copy.logoutTitle,
+        content: this.copy.logoutContent,
         success: (res) => {
           if (res.confirm) {
             merchantRealtime.stop()
@@ -303,7 +421,7 @@ export default {
           this.$store.commit('SET_MERCHANT_INFO', res)
         }
       } catch (error) {
-        console.error('加载店铺信息失败', error)
+        console.error(this.copy.loadFailed, error)
       }
     },
     async toggleShopStatus(value) {
@@ -325,32 +443,32 @@ export default {
           status: nextValue ? 'open' : 'closed'
         })
         uni.showToast({
-          title: nextValue ? '店铺已开始营业' : '店铺已切换为休息中',
+          title: nextValue ? this.copy.switchedOpen : this.copy.switchedClosed,
           icon: 'none'
         })
       } catch (error) {
         this.shopOpen = !nextValue
-        console.error('更新店铺状态失败', error)
+        console.error(this.copy.updateStatusFailed, error)
       } finally {
         this.statusLoading = false
       }
     },
     validateForm() {
       if (!this.safeTrim(this.form.name)) {
-        uni.showToast({ title: '请填写店铺名称', icon: 'none' })
+        uni.showToast({ title: this.copy.nameRequired, icon: 'none' })
         return false
       }
       if (!this.safeTrim(this.form.phone)) {
-        uni.showToast({ title: '请填写联系电话', icon: 'none' })
+        uni.showToast({ title: this.copy.phoneRequired, icon: 'none' })
         return false
       }
       if (!/^1[3-9]\d{9}$/.test(this.safeTrim(this.form.phone))) {
-        uni.showToast({ title: '请填写正确的 11 位手机号', icon: 'none' })
+        uni.showToast({ title: this.copy.phoneInvalid, icon: 'none' })
         return false
       }
       const businessHours = this.safeTrim(this.form.businessHours)
-      if (businessHours && !/^(\d{1,2})[:：](\d{2})\s*[-~至到]+\s*(\d{1,2})[:：](\d{2})$/.test(businessHours)) {
-        uni.showToast({ title: '营业时间请填写为 8:00-21:00 这类格式', icon: 'none' })
+      if (businessHours && !/^(\d{1,2}):(\d{2})\s*[-~]+\s*(\d{1,2}):(\d{2})$/.test(businessHours)) {
+        uni.showToast({ title: this.copy.hoursInvalid, icon: 'none' })
         return false
       }
       return true
@@ -369,7 +487,7 @@ export default {
       this.loading = true
       try {
         const payload = this.buildSubmitPayload()
-        console.log('保存店铺设置，请求参数：', payload)
+        console.log(this.copy.saveLog, payload)
         const latest = await updateShopInfo(payload)
         if (latest) {
           this.merchantSnapshot = { ...latest }
@@ -379,9 +497,9 @@ export default {
         } else {
           await this.loadShopInfo()
         }
-        uni.showToast({ title: '店铺设置已保存', icon: 'none' })
+        uni.showToast({ title: this.copy.saveSuccess, icon: 'none' })
       } catch (error) {
-        console.error('保存店铺设置失败', error)
+        console.error(this.copy.saveFailed, error)
       } finally {
         this.loading = false
       }
@@ -472,6 +590,16 @@ export default {
   align-items: center;
   justify-content: center;
   backdrop-filter: blur(8rpx);
+}
+
+.upload-trigger {
+  overflow: hidden;
+}
+
+.hero-logo {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
 }
 
 .hero-meta {
@@ -615,6 +743,35 @@ export default {
   border-radius: 24rpx;
   background: #f8fafc;
   border: 1rpx solid #edf1f6;
+}
+
+.logo-upload {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 180rpx;
+  height: 180rpx;
+  border-radius: 24rpx;
+  border: 2rpx dashed #ffd2af;
+  background: #fff7ef;
+  overflow: hidden;
+}
+
+.logo-preview {
+  width: 100%;
+  height: 100%;
+}
+
+.logo-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12rpx;
+  color: #ff7a00;
+}
+
+.logo-placeholder-text {
+  font-size: 24rpx;
 }
 
 .field-head {

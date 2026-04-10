@@ -17,6 +17,10 @@
           <el-icon><User /></el-icon>
           <span>用户管理</span>
         </el-menu-item>
+        <el-menu-item index="/rider">
+          <el-icon><Bicycle /></el-icon>
+          <span>骑手管理</span>
+        </el-menu-item>
         <el-menu-item index="/order">
           <el-icon><List /></el-icon>
           <span>订单管理</span>
@@ -37,6 +41,10 @@
           <el-icon><Ticket /></el-icon>
           <span>优惠券管理</span>
         </el-menu-item>
+        <el-menu-item index="/promotion">
+          <el-icon><Ticket /></el-icon>
+          <span>促销活动</span>
+        </el-menu-item>
         <el-menu-item index="/config">
           <el-icon><Setting /></el-icon>
           <span>系统配置</span>
@@ -44,7 +52,7 @@
       </el-menu>
     </el-aside>
     <el-container>
-      <el-header style="display: flex; align-items: center; justify-content: flex-end; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.08)">
+      <el-header class="header">
         <span style="margin-right: 16px">{{ userStore.userInfo.nickname || '管理员' }}</span>
         <el-button type="danger" text @click="handleLogout">退出登录</el-button>
       </el-header>
@@ -58,7 +66,7 @@
 <script setup>
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../store'
-import { DataAnalysis, User, List, Shop, Ticket, Setting, Money, WarningFilled } from '@element-plus/icons-vue'
+import { Bicycle, DataAnalysis, User, List, Shop, Ticket, Setting, Money, WarningFilled } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -79,5 +87,13 @@ function handleLogout() {
   font-size: 16px;
   font-weight: bold;
   background-color: #263445;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
 </style>

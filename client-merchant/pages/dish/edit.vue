@@ -1,9 +1,9 @@
-<template>
+﻿<template>
   <view class="container">
     <view class="hero-card">
       <text class="hero-title">{{ isEdit ? '编辑菜品' : '新增菜品' }}</text>
       <text class="hero-subtitle">
-        {{ form.type === 'combo' ? '套餐可以配置多个可选分组，库存会根据套餐内单品动态计算' : '单品会直接作为可售卖商品展示给学生' }}
+        {{ form.type === 'combo' ? '套餐按已有菜品分类配置，学生下单时需在每个分类中选择指定商品。' : '单品会直接在学生端展示并按库存售卖。' }}
       </text>
     </view>
 
@@ -31,85 +31,43 @@
         <u-form-item v-if="form.type === 'single'" label="库存" prop="stock" required>
           <u-input v-model="form.stock" type="number" placeholder="请输入库存数量"></u-input>
         </u-form-item>
-        <view v-else class="combo-tip">套餐库存会根据所选单品库存自动计算，无需手动填写。</view>
+        <view v-else class="combo-tip">套餐库存会根据所选分类下可售单品自动计算，无需手动填写。</view>
         <u-form-item label="菜品描述" prop="description">
-          <u-input
-            v-model="form.description"
-            type="textarea"
-            autoHeight
-            placeholder="简单介绍一下卖点、口味或适合人群"
-          ></u-input>
+          <u-input v-model="form.description" type="textarea" autoHeight placeholder="简单介绍卖点、口味或适合人群"></u-input>
         </u-form-item>
       </u-form>
     </view>
 
     <view class="form-card" v-if="form.type === 'combo'">
       <view class="section-header">
-        <text class="section-title">套餐配置</text>
-        <text class="section-tip">套餐选项只能引用单品</text>
+        <text class="section-title">套餐规则</text>
+        <text class="section-tip">每个分类当前固定选择 1 个单品</text>
       </view>
 
-      <view v-if="selectableDishes.length === 0" class="empty-config">
-        请先创建单品，再回来配置套餐选项。
-      </view>
+      <view v-if="comboCategoryOptions.length === 0" class="empty-config">请先创建至少一个包含单品的菜品分类，再回来配置套餐。</view>
 
-      <view v-for="(group, groupIndex) in form.comboConfig.groups" :key="groupIndex" class="combo-group">
+      <view v-for="(rule, ruleIndex) in form.comboConfig.rules" :key="ruleIndex" class="combo-group">
         <view class="group-header">
-          <text class="group-title">分组 {{ groupIndex + 1 }}</text>
-          <text class="group-remove" @click="removeComboGroup(groupIndex)">删除分组</text>
+          <text class="group-title">分类规则 {{ ruleIndex + 1 }}</text>
+          <text class="group-remove" @click="removeComboRule(ruleIndex)">删除规则</text>
         </view>
 
         <view class="field-block">
-          <text class="field-label">分组名称</text>
-          <input v-model="group.name" class="field-input" placeholder="例如：主食、饮料、小食" />
+          <text class="field-label">选择分类</text>
+          <picker class="picker-wrap" :range="comboCategoryOptions" range-key="name" :value="getCategoryPickerIndex(rule.categoryId)" @change="onSelectComboCategory(ruleIndex, $event)">
+            <view class="picker-value">{{ getCategoryLabel(rule.categoryId) || '请选择分类' }}</view>
+          </picker>
         </view>
 
-        <view class="inline-fields">
+        <view class="inline-fields single-column">
           <view class="inline-field">
-            <text class="field-label">最少选择</text>
-            <input v-model="group.minSelect" class="field-input" type="number" />
-          </view>
-          <view class="inline-field">
-            <text class="field-label">最多选择</text>
-            <input v-model="group.maxSelect" class="field-input" type="number" />
+            <text class="field-label">选择数量</text>
+            <input v-model="rule.requiredCount" class="field-input" type="number" disabled />
           </view>
         </view>
-
-        <view v-for="(option, optionIndex) in group.options" :key="optionIndex" class="option-card">
-          <view class="option-header">
-            <text class="option-title">选项 {{ optionIndex + 1 }}</text>
-            <text class="group-remove" @click="removeComboOption(groupIndex, optionIndex)">删除选项</text>
-          </view>
-
-          <view class="field-block">
-            <text class="field-label">选择单品</text>
-            <picker
-              class="picker-wrap"
-              :range="selectableDishes"
-              range-key="name"
-              :value="getDishPickerIndex(option.dishId)"
-              @change="onSelectOptionDish(groupIndex, optionIndex, $event)"
-            >
-              <view class="picker-value">{{ getDishLabel(option.dishId) || '请选择单品' }}</view>
-            </picker>
-          </view>
-
-          <view class="inline-fields">
-            <view class="inline-field">
-              <text class="field-label">数量</text>
-              <input v-model="option.quantity" class="field-input" type="number" />
-            </view>
-            <view class="inline-field">
-              <text class="field-label">加价</text>
-              <input v-model="option.extraPrice" class="field-input" type="digit" />
-            </view>
-          </view>
-        </view>
-
-        <view class="add-link" @click="addComboOption(groupIndex)">+ 添加选项</view>
       </view>
 
-      <view class="add-group-btn" @click="addComboGroup">+ 添加套餐分组</view>
+      <view class="add-group-btn" @click="addComboRule">+ 添加分类规则</view>
     </view>
 
     <view class="form-card">
@@ -119,12 +77,7 @@
       </view>
 
       <view class="upload-panel" @click="chooseImage">
-        <image
-          v-if="form.image"
-          :src="form.image"
-          class="preview-img"
-          mode="aspectFill"
-        ></image>
+        <image v-if="form.image" :src="form.image" class="preview-img" mode="aspectFill"></image>
         <view v-else class="upload-placeholder">
           <u-icon name="camera-fill" size="44" color="#ff7a1a"></u-icon>
           <text class="upload-title">上传菜品图片</text>
@@ -140,35 +93,27 @@
 
     <view class="tips-card">
       <text class="tips-title">填写提示</text>
-      <text class="tips-item">1. 套餐价格建议填写套餐基础价，选项加价会在下单时自动累加。</text>
-      <text class="tips-item">2. 套餐内每个分组都可以配置最少/最多选择数量，学生端会按这里限制选择。</text>
-      <text class="tips-item">3. 套餐库存由选项单品库存共同决定，某些单品下架后对应选项会自动不可选。</text>
+      <text class="tips-item">1. 套餐价格填写套餐固定价，学生选完各分类商品后仍按套餐价结算。</text>
+      <text class="tips-item">2. 同一个套餐内分类不能重复，且分类必须属于当前商家。</text>
+      <text class="tips-item">3. 套餐只能引用单品分类，不支持在套餐中再嵌套套餐。</text>
     </view>
 
     <view class="bottom-bar">
-      <u-button type="primary" shape="circle" @click="handleSubmit" :loading="loading">
-        {{ isEdit ? '保存修改' : '确认新增' }}
-      </u-button>
+      <u-button type="primary" shape="circle" @click="handleSubmit" :loading="loading">{{ isEdit ? '保存修改' : '确认新增' }}</u-button>
     </view>
   </view>
 </template>
 
 <script>
 import { getDishDetail, createDish, updateDish, getDishList } from '@/api/dish'
+import { getCategoryList } from '@/api/category'
 import { UPLOAD_URL } from '@/config/api'
 import { handleUnauthorized } from '@/utils/session'
 
-const emptyOption = () => ({
-  dishId: null,
-  quantity: '1',
-  extraPrice: '0'
-})
-
-const emptyGroup = () => ({
-  name: '',
-  minSelect: '1',
-  maxSelect: '1',
-  options: [emptyOption()]
+const emptyRule = () => ({
+  categoryId: null,
+  categoryName: '',
+  requiredCount: '1'
 })
 
 export default {
@@ -177,7 +122,8 @@ export default {
       isEdit: false,
       dishId: '',
       loading: false,
-      selectableDishes: [],
+      categoryOptions: [],
+      comboCategoryOptions: [],
       form: {
         type: 'single',
         name: '',
@@ -187,7 +133,7 @@ export default {
         category: '',
         image: '',
         comboConfig: {
-          groups: []
+          rules: []
         }
       }
     }
@@ -203,12 +149,23 @@ export default {
       return type === 'combo' ? 'combo' : 'single'
     },
     async bootstrap() {
+      // loadSelectableDishes 依赖 categoryOptions，需保证分类先加载完成
+      await this.loadCategories()
+      await this.loadSelectableDishes()
       if (this.isEdit) {
         await this.loadDish()
       }
-      await this.loadSelectableDishes()
-      if (this.form.type === 'combo' && this.form.comboConfig.groups.length === 0) {
-        this.addComboGroup()
+      if (this.form.type === 'combo' && this.form.comboConfig.rules.length === 0) {
+        this.addComboRule()
+      }
+    },
+    async loadCategories() {
+      try {
+        const list = await getCategoryList()
+        this.categoryOptions = Array.isArray(list) ? list : []
+      } catch (error) {
+        console.error('加载分类失败', error)
+        this.categoryOptions = []
       }
     },
     async loadSelectableDishes() {
@@ -216,12 +173,18 @@ export default {
         const response = await getDishList()
         const list = (response.records || response || []).map((dish) => ({
           id: Number(dish.id),
-          name: dish.name || '',
-          type: this.normalizeDishType(dish.type)
+          type: this.normalizeDishType(dish.type),
+          categoryId: dish.categoryId !== undefined && dish.categoryId !== null ? Number(dish.categoryId) : null
         }))
-        this.selectableDishes = list.filter((dish) => dish.type === 'single' && String(dish.id) !== String(this.dishId))
+        const categoryIdSet = new Set(
+          list
+            .filter((dish) => dish.type === 'single' && String(dish.id) !== String(this.dishId) && dish.categoryId)
+            .map((dish) => dish.categoryId)
+        )
+        this.comboCategoryOptions = this.categoryOptions.filter((category) => categoryIdSet.has(Number(category.id)))
       } catch (error) {
-        console.error('加载可选单品失败', error)
+        console.error('加载单品失败', error)
+        this.comboCategoryOptions = []
       }
     },
     async loadDish() {
@@ -238,69 +201,52 @@ export default {
           category: dish.category || '',
           image: dish.image || '',
           comboConfig: {
-            groups: this.normalizeComboGroups(dish.comboConfig && dish.comboConfig.groups)
+            rules: this.normalizeComboRules(dish.comboConfig && dish.comboConfig.rules)
           }
         }
       } catch (error) {
         console.error('加载菜品详情失败', error)
       }
     },
-    normalizeComboGroups(groups) {
-      if (!Array.isArray(groups)) {
+    normalizeComboRules(rules) {
+      if (!Array.isArray(rules)) {
         return []
       }
-      return groups.map((group) => ({
-        name: group.name || '',
-        minSelect: String(group.minSelect !== undefined && group.minSelect !== null ? group.minSelect : 1),
-        maxSelect: String(group.maxSelect !== undefined && group.maxSelect !== null ? group.maxSelect : 1),
-        options: Array.isArray(group.options) && group.options.length
-          ? group.options.map((option) => ({
-              dishId: option.dishId || null,
-              quantity: String(option.quantity || 1),
-              extraPrice: String(option.extraPrice || 0)
-            }))
-          : [emptyOption()]
+      return rules.map((rule) => ({
+        categoryId: rule.categoryId || null,
+        categoryName: rule.categoryName || '',
+        requiredCount: String(rule.requiredCount || 1)
       }))
     },
     setDishType(type) {
       this.form.type = type
-      if (type === 'combo' && this.form.comboConfig.groups.length === 0) {
-        this.addComboGroup()
+      if (type === 'combo' && this.form.comboConfig.rules.length === 0) {
+        this.addComboRule()
       }
     },
-    addComboGroup() {
-      this.form.comboConfig.groups.push(emptyGroup())
+    addComboRule() {
+      this.form.comboConfig.rules.push(emptyRule())
     },
-    removeComboGroup(groupIndex) {
-      this.form.comboConfig.groups.splice(groupIndex, 1)
-      if (this.form.comboConfig.groups.length === 0 && this.form.type === 'combo') {
-        this.form.comboConfig.groups.push(emptyGroup())
+    removeComboRule(ruleIndex) {
+      this.form.comboConfig.rules.splice(ruleIndex, 1)
+      if (this.form.comboConfig.rules.length === 0 && this.form.type === 'combo') {
+        this.form.comboConfig.rules.push(emptyRule())
       }
     },
-    addComboOption(groupIndex) {
-      this.form.comboConfig.groups[groupIndex].options.push(emptyOption())
-    },
-    removeComboOption(groupIndex, optionIndex) {
-      const options = this.form.comboConfig.groups[groupIndex].options
-      options.splice(optionIndex, 1)
-      if (options.length === 0) {
-        options.push(emptyOption())
-      }
-    },
-    getDishPickerIndex(dishId) {
-      const index = this.selectableDishes.findIndex((dish) => String(dish.id) === String(dishId))
+    getCategoryPickerIndex(categoryId) {
+      const index = this.comboCategoryOptions.findIndex((category) => String(category.id) === String(categoryId))
       return index >= 0 ? index : 0
     },
-    getDishLabel(dishId) {
-      const matchedDish = this.selectableDishes.find((dish) => String(dish.id) === String(dishId))
-      return matchedDish ? matchedDish.name : ''
+    getCategoryLabel(categoryId) {
+      const matched = this.comboCategoryOptions.find((category) => String(category.id) === String(categoryId))
+      return matched ? matched.name : ''
     },
-    onSelectOptionDish(groupIndex, optionIndex, event) {
-      const pickedDish = this.selectableDishes[Number(event.detail.value)]
-      if (!pickedDish) {
-        return
-      }
-      this.form.comboConfig.groups[groupIndex].options[optionIndex].dishId = pickedDish.id
+    onSelectComboCategory(ruleIndex, event) {
+      const picked = this.comboCategoryOptions[Number(event.detail.value)]
+      if (!picked) return
+      this.form.comboConfig.rules[ruleIndex].categoryId = Number(picked.id)
+      this.form.comboConfig.rules[ruleIndex].categoryName = picked.name || ''
+      this.form.comboConfig.rules[ruleIndex].requiredCount = '1'
     },
     chooseImage() {
       uni.chooseImage({
@@ -322,8 +268,7 @@ export default {
                 return
               }
               if (uploadRes.statusCode === 403) {
-                const msg = '账号已被禁用，请重新登录'
-                uni.showToast({ title: msg, icon: 'none' })
+                uni.showToast({ title: '账号已被禁用，请重新登录', icon: 'none' })
                 handleUnauthorized()
                 return
               }
@@ -342,66 +287,36 @@ export default {
       })
     },
     buildComboPayload() {
-      const groups = this.form.comboConfig.groups
-      if (!Array.isArray(groups) || groups.length === 0) {
-        throw new Error('请至少配置一个套餐分组')
+      const rules = this.form.comboConfig.rules
+      if (!Array.isArray(rules) || rules.length === 0) {
+        throw new Error('请至少配置一个套餐分类')
       }
-      if (this.selectableDishes.length === 0) {
-        throw new Error('请先创建单品，再配置套餐')
+      if (this.comboCategoryOptions.length === 0) {
+        throw new Error('请先创建包含单品的分类')
       }
 
+      const seenCategoryIds = new Set()
       return {
-        groups: groups.map((group, groupIndex) => {
-          const name = (group.name || '').trim()
-          const minSelect = parseInt(group.minSelect, 10)
-          const maxSelect = parseInt(group.maxSelect, 10)
+        rules: rules.map((rule, ruleIndex) => {
+          const categoryId = Number(rule.categoryId)
+          const requiredCount = 1
+          const category = this.comboCategoryOptions.find((item) => Number(item.id) === categoryId)
 
-          if (!name) {
-            throw new Error(`请填写第 ${groupIndex + 1} 个分组名称`)
+          if (!Number.isFinite(categoryId)) {
+            throw new Error(`请选择第 ${ruleIndex + 1} 个分类`)
           }
-          if (!Number.isInteger(minSelect) || minSelect < 0) {
-            throw new Error(`第 ${groupIndex + 1} 个分组的最少选择数量不合法`)
+          if (!category) {
+            throw new Error(`第 ${ruleIndex + 1} 个分类不存在或没有可选单品`)
           }
-          if (!Number.isInteger(maxSelect) || maxSelect <= 0 || maxSelect < minSelect) {
-            throw new Error(`第 ${groupIndex + 1} 个分组的最多选择数量不合法`)
+          if (seenCategoryIds.has(categoryId)) {
+            throw new Error('同一个套餐内分类不能重复')
           }
+          seenCategoryIds.add(categoryId)
 
-          const options = Array.isArray(group.options) ? group.options : []
-          if (!options.length) {
-            throw new Error(`第 ${groupIndex + 1} 个分组至少需要一个选项`)
-          }
-
-          const seenDishIds = new Set()
           return {
-            name,
-            minSelect,
-            maxSelect,
-            options: options.map((option, optionIndex) => {
-              const dishId = Number(option.dishId)
-              const quantity = parseInt(option.quantity, 10)
-              const extraPrice = Number(option.extraPrice || 0)
-
-              if (!Number.isFinite(dishId)) {
-                throw new Error(`第 ${groupIndex + 1} 个分组选项 ${optionIndex + 1} 还没有选择单品`)
-              }
-              if (seenDishIds.has(dishId)) {
-                throw new Error(`第 ${groupIndex + 1} 个分组存在重复单品`)
-              }
-              seenDishIds.add(dishId)
-
-              if (!Number.isInteger(quantity) || quantity <= 0) {
-                throw new Error(`第 ${groupIndex + 1} 个分组选项 ${optionIndex + 1} 的数量不合法`)
-              }
-              if (!Number.isFinite(extraPrice) || extraPrice < 0) {
-                throw new Error(`第 ${groupIndex + 1} 个分组选项 ${optionIndex + 1} 的加价不合法`)
-              }
-
-              return {
-                dishId,
-                quantity,
-                extraPrice
-              }
-            })
+            categoryId,
+            categoryName: category.name || rule.categoryName || '',
+            requiredCount
           }
         })
       }
@@ -459,21 +374,18 @@ export default {
   padding: 24rpx 24rpx 180rpx;
   background: linear-gradient(180deg, #fff8f2 0%, #f6f7fb 260rpx, #f6f7fb 100%);
 }
-
 .hero-card {
   padding: 30rpx;
   border-radius: 28rpx;
   background: linear-gradient(135deg, #ff9b44 0%, #ff6b00 100%);
   box-shadow: 0 20rpx 44rpx rgba(255, 107, 0, 0.2);
 }
-
 .hero-title {
   display: block;
   font-size: 40rpx;
   font-weight: 700;
   color: #ffffff;
 }
-
 .hero-subtitle {
   display: block;
   margin-top: 12rpx;
@@ -481,7 +393,6 @@ export default {
   line-height: 1.6;
   color: rgba(255, 255, 255, 0.9);
 }
-
 .form-card,
 .tips-card {
   margin-top: 24rpx;
@@ -490,31 +401,26 @@ export default {
   background: #ffffff;
   box-shadow: 0 12rpx 30rpx rgba(20, 34, 64, 0.06);
 }
-
 .section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 18rpx;
 }
-
 .section-title {
   font-size: 30rpx;
   font-weight: 700;
   color: #202939;
 }
-
 .section-tip {
   font-size: 22rpx;
   color: #9aa3b2;
 }
-
 .type-switch {
   display: flex;
   gap: 16rpx;
   margin-bottom: 20rpx;
 }
-
 .type-chip {
   padding: 14rpx 26rpx;
   border-radius: 999rpx;
@@ -522,13 +428,11 @@ export default {
   color: #718096;
   font-size: 26rpx;
 }
-
 .type-chip.active {
   background: #fff0e4;
   color: #ff6b00;
   font-weight: 600;
 }
-
 .combo-tip,
 .empty-config {
   margin-bottom: 18rpx;
@@ -539,44 +443,35 @@ export default {
   font-size: 24rpx;
   line-height: 1.6;
 }
-
 .combo-group {
   margin-bottom: 24rpx;
   padding: 22rpx;
   border-radius: 22rpx;
   background: #fff8f2;
 }
-
-.group-header,
-.option-header {
+.group-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
-
-.group-title,
-.option-title {
+.group-title {
   font-size: 28rpx;
   font-weight: 700;
   color: #1f2937;
 }
-
 .group-remove {
   font-size: 24rpx;
   color: #f56c6c;
 }
-
 .field-block {
   margin-top: 18rpx;
 }
-
 .field-label {
   display: block;
   margin-bottom: 10rpx;
   font-size: 24rpx;
   color: #7b8495;
 }
-
 .field-input,
 .picker-value {
   width: 100%;
@@ -590,30 +485,18 @@ export default {
   display: flex;
   align-items: center;
 }
-
 .picker-wrap {
   width: 100%;
 }
-
-.picker-value {
-  color: #1f2937;
-}
-
 .inline-fields {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 16rpx;
   margin-top: 18rpx;
 }
-
-.option-card {
-  margin-top: 18rpx;
-  padding: 20rpx;
-  border-radius: 18rpx;
-  background: rgba(255, 255, 255, 0.9);
+.inline-fields.single-column {
+  grid-template-columns: 1fr;
 }
-
-.add-link,
 .add-group-btn {
   display: flex;
   align-items: center;
@@ -625,7 +508,6 @@ export default {
   color: #ff7a1a;
   font-size: 26rpx;
 }
-
 .upload-panel {
   position: relative;
   display: flex;
@@ -636,31 +518,26 @@ export default {
   background: #fff7f0;
   overflow: hidden;
 }
-
 .preview-img {
   width: 100%;
   height: 320rpx;
 }
-
 .upload-placeholder {
   display: flex;
   flex-direction: column;
   align-items: center;
 }
-
 .upload-title {
   margin-top: 16rpx;
   font-size: 28rpx;
   font-weight: 600;
   color: #ff7a1a;
 }
-
 .upload-desc {
   margin-top: 10rpx;
   font-size: 22rpx;
   color: #9aa3b2;
 }
-
 .upload-mask {
   position: absolute;
   right: 20rpx;
@@ -672,12 +549,10 @@ export default {
   border-radius: 999rpx;
   background: rgba(0, 0, 0, 0.38);
 }
-
 .upload-mask-text {
   font-size: 22rpx;
   color: #ffffff;
 }
-
 .tips-title {
   display: block;
   margin-bottom: 18rpx;
@@ -685,14 +560,12 @@ export default {
   font-weight: 700;
   color: #202939;
 }
-
 .tips-item {
   display: block;
   font-size: 24rpx;
   line-height: 1.8;
   color: #7b8495;
 }
-
 .bottom-bar {
   position: fixed;
   left: 0;

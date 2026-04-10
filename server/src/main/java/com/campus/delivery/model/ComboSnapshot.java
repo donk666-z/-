@@ -11,25 +11,25 @@ import java.util.List;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class ComboSnapshot implements Serializable {
 
-    private List<Group> groups;
+    private List<Rule> rules;
 
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class Group implements Serializable {
-        private Integer groupIndex;
-        private String name;
-        private Integer minSelect;
-        private Integer maxSelect;
-        private List<Option> options;
+    public static class Rule implements Serializable {
+        private Long categoryId;
+        private String categoryName;
+        private Integer requiredCount;
+        private List<Item> items;
     }
 
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class Option implements Serializable {
+    public static class Item implements Serializable {
         private Long dishId;
         private String dishName;
         private String dishImage;
         private Integer quantity;
+        private Integer totalQuantity;
         private BigDecimal extraPrice;
         private BigDecimal dishPrice;
     }
