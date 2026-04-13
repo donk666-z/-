@@ -65,6 +65,26 @@
             <input v-model="rule.requiredCount" class="field-input" type="number" disabled />
           </view>
         </view>
+
+        <view v-if="getRuleDishOptions(rule).length > 0" class="option-list">
+          <view v-for="item in getRuleDishOptions(rule)" :key="item.id" class="option-row">
+            <view class="option-main">
+              <text class="option-name">{{ item.name }}</text>
+              <text class="option-price">原价 {{ formatMoney(item.price) }} 元</text>
+            </view>
+            <view class="option-extra">
+              <text class="option-extra-label">加价</text>
+              <input
+                :value="getRuleItemExtraPrice(rule, item.id)"
+                class="option-extra-input"
+                type="digit"
+                placeholder="0"
+                @input="onRuleItemExtraPriceInput(ruleIndex, item.id, $event)"
+              />
+              <text class="option-extra-unit">元</text>
+            </view>
+          </view>
+        </view>
       </view>
 
       <view class="add-group-btn" @click="addComboRule">+ 添加分类规则</view>
@@ -113,7 +133,8 @@ import { handleUnauthorized } from '@/utils/session'
 const emptyRule = () => ({
   categoryId: null,
   categoryName: '',
-  requiredCount: '1'
+  requiredCount: '1',
+  items: []
 })
 
 export default {
@@ -173,6 +194,8 @@ export default {
         const response = await getDishList()
         const list = (response.records || response || []).map((dish) => ({
           id: Number(dish.id),
+          name: dish.name || '',
+          price: Number(dish.price || 0),
           type: this.normalizeDishType(dish.type),
           categoryId: dish.categoryId !== undefined && dish.categoryId !== null ? Number(dish.categoryId) : null
         }))
@@ -181,7 +204,12 @@ export default {
             .filter((dish) => dish.type === 'single' && String(dish.id) !== String(this.dishId) && dish.categoryId)
             .map((dish) => dish.categoryId)
         )
-        this.comboCategoryOptions = this.categoryOptions.filter((category) => categoryIdSet.has(Number(category.id)))
+        this.comboCategoryOptions = this.categoryOptions
+          .filter((category) => categoryIdSet.has(Number(category.id)))
+          .map((category) => ({
+            ...category,
+            dishes: list.filter((dish) => dish.type === 'single' && Number(dish.categoryId) === Number(category.id))
+          }))
       } catch (error) {
         console.error('加载单品失败', error)
         this.comboCategoryOptions = []
@@ -204,6 +232,11 @@ export default {
             rules: this.normalizeComboRules(dish.comboConfig && dish.comboConfig.rules)
           }
         }
+        this.form.comboConfig.rules.forEach((rule, ruleIndex) => {
+          if (rule.categoryId) {
+            this.syncRuleItems(ruleIndex)
+          }
+        })
       } catch (error) {
         console.error('加载菜品详情失败', error)
       }
@@ -215,7 +248,15 @@ export default {
       return rules.map((rule) => ({
         categoryId: rule.categoryId || null,
         categoryName: rule.categoryName || '',
-        requiredCount: String(rule.requiredCount || 1)
+        requiredCount: String(rule.requiredCount || 1),
+        items: Array.isArray(rule.items)
+          ? rule.items
+              .filter((item) => item && item.dishId !== undefined && item.dishId !== null)
+              .map((item) => ({
+                dishId: Number(item.dishId),
+                extraPrice: this.formatExtraPriceValue(item.extraPrice)
+              }))
+          : []
       }))
     },
     setDishType(type) {
@@ -247,6 +288,50 @@ export default {
       this.form.comboConfig.rules[ruleIndex].categoryId = Number(picked.id)
       this.form.comboConfig.rules[ruleIndex].categoryName = picked.name || ''
       this.form.comboConfig.rules[ruleIndex].requiredCount = '1'
+      this.syncRuleItems(ruleIndex)
+    },
+    formatMoney(value) {
+      const numberValue = Number(value || 0)
+      return Number.isInteger(numberValue) ? String(numberValue) : numberValue.toFixed(2)
+    },
+    formatExtraPriceValue(value) {
+      const numberValue = Number(value || 0)
+      if (!Number.isFinite(numberValue) || numberValue <= 0) {
+        return '0'
+      }
+      return numberValue.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
+    },
+    getRuleDishOptions(rule) {
+      const category = this.comboCategoryOptions.find((item) => Number(item.id) === Number(rule.categoryId))
+      return category && Array.isArray(category.dishes) ? category.dishes : []
+    },
+    syncRuleItems(ruleIndex) {
+      const rule = this.form.comboConfig.rules[ruleIndex]
+      if (!rule) return
+      const dishes = this.getRuleDishOptions(rule)
+      const extraPriceMap = new Map(
+        (Array.isArray(rule.items) ? rule.items : [])
+          .filter((item) => item && item.dishId !== undefined && item.dishId !== null)
+          .map((item) => [Number(item.dishId), this.formatExtraPriceValue(item.extraPrice)])
+      )
+      rule.items = dishes.map((dish) => ({
+        dishId: Number(dish.id),
+        extraPrice: extraPriceMap.get(Number(dish.id)) || '0'
+      }))
+    },
+    getRuleItemExtraPrice(rule, dishId) {
+      const matched = (Array.isArray(rule.items) ? rule.items : []).find((item) => Number(item.dishId) === Number(dishId))
+      return matched ? matched.extraPrice : '0'
+    },
+    onRuleItemExtraPriceInput(ruleIndex, dishId, event) {
+      this.syncRuleItems(ruleIndex)
+      const rule = this.form.comboConfig.rules[ruleIndex]
+      if (!rule) return
+      const matched = (Array.isArray(rule.items) ? rule.items : []).find((item) => Number(item.dishId) === Number(dishId))
+      if (!matched) return
+      const rawValue = event && event.detail ? String(event.detail.value || '') : ''
+      const normalized = rawValue.replace(/[^\d.]/g, '').replace(/^\./, '')
+      matched.extraPrice = normalized || '0'
     },
     chooseImage() {
       uni.chooseImage({
@@ -316,7 +401,11 @@ export default {
           return {
             categoryId,
             categoryName: category.name || rule.categoryName || '',
-            requiredCount
+            requiredCount,
+            items: this.getRuleDishOptions(rule).map((dish) => ({
+              dishId: Number(dish.id),
+              extraPrice: Number(this.getRuleItemExtraPrice(rule, dish.id) || 0)
+            }))
           }
         })
       }
@@ -507,6 +596,57 @@ export default {
   border: 2rpx dashed #ffb37b;
   color: #ff7a1a;
   font-size: 26rpx;
+}
+.option-list {
+  margin-top: 18rpx;
+  border-top: 1rpx solid #f1e4d8;
+}
+.option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 18rpx 0;
+  border-bottom: 1rpx solid #f7eadf;
+}
+.option-main {
+  min-width: 0;
+  flex: 1;
+}
+.option-name,
+.option-price {
+  display: block;
+}
+.option-name {
+  font-size: 26rpx;
+  color: #1f2937;
+}
+.option-price {
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #8b95a7;
+}
+.option-extra {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  flex-shrink: 0;
+}
+.option-extra-label,
+.option-extra-unit {
+  font-size: 22rpx;
+  color: #7b8495;
+}
+.option-extra-input {
+  width: 120rpx;
+  min-height: 64rpx;
+  padding: 0 18rpx;
+  border-radius: 14rpx;
+  background: #ffffff;
+  text-align: center;
+  font-size: 24rpx;
+  color: #1f2937;
+  box-sizing: border-box;
 }
 .upload-panel {
   position: relative;

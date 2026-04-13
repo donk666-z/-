@@ -13,8 +13,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -79,7 +79,7 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
                 .collect(Collectors.toMap(Category::getId, item -> item, (left, right) -> left));
 
         ComboConfig normalized = new ComboConfig();
-        List<ComboConfig.Rule> rules = new ArrayList<ComboConfig.Rule>();
+        List<ComboConfig.Rule> normalizedRules = new ArrayList<ComboConfig.Rule>();
         for (ComboConfig.Rule rawRule : comboConfig.getRules()) {
             if (rawRule == null) {
                 continue;
@@ -95,7 +95,7 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
                 throw new IllegalArgumentException("套餐分类不存在或不属于当前商家");
             }
 
-            if (rules.stream().anyMatch(rule -> categoryId.equals(rule.getCategoryId()))) {
+            if (normalizedRules.stream().anyMatch(rule -> categoryId.equals(rule.getCategoryId()))) {
                 throw new IllegalArgumentException("同一个套餐内分类不能重复");
             }
 
@@ -112,22 +112,53 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
                 wrapper.ne(Dish::getId, currentDishId);
             }
 
-            List<Dish> categoryDishes = list(wrapper);
-            long singleDishCount = categoryDishes.stream()
+            List<Dish> categoryDishes = list(wrapper).stream()
                     .filter(dish -> TYPE_SINGLE.equals(normalizeDishType(dish.getType())))
-                    .count();
-            if (singleDishCount < requiredCount) {
+                    .sorted((left, right) -> {
+                        Long leftId = left.getId() == null ? Long.MAX_VALUE : left.getId();
+                        Long rightId = right.getId() == null ? Long.MAX_VALUE : right.getId();
+                        return leftId.compareTo(rightId);
+                    })
+                    .collect(Collectors.toList());
+            if (categoryDishes.size() < requiredCount) {
                 throw new IllegalArgumentException("套餐分类“" + category.getName() + "”下可选单品不足");
             }
 
-            ComboConfig.Rule rule = new ComboConfig.Rule();
-            rule.setCategoryId(categoryId);
-            rule.setCategoryName(category.getName());
-            rule.setRequiredCount(requiredCount);
-            rules.add(rule);
+            Set<Long> validDishIds = categoryDishes.stream()
+                    .map(Dish::getId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+            Map<Long, BigDecimal> extraPriceByDishId = new LinkedHashMap<Long, BigDecimal>();
+            for (ComboConfig.Item rawItem : safeItems(rawRule)) {
+                if (rawItem == null || rawItem.getDishId() == null) {
+                    continue;
+                }
+                if (!validDishIds.contains(rawItem.getDishId())) {
+                    throw new IllegalArgumentException("套餐分类“" + category.getName() + "”存在无效单品");
+                }
+                if (extraPriceByDishId.containsKey(rawItem.getDishId())) {
+                    throw new IllegalArgumentException("套餐分类“" + category.getName() + "”单品加价配置重复");
+                }
+                extraPriceByDishId.put(rawItem.getDishId(), normalizeExtraPrice(rawItem.getExtraPrice()));
+            }
+
+            ComboConfig.Rule normalizedRule = new ComboConfig.Rule();
+            normalizedRule.setCategoryId(categoryId);
+            normalizedRule.setCategoryName(category.getName());
+            normalizedRule.setRequiredCount(requiredCount);
+            normalizedRule.setExtraPrice(normalizeExtraPrice(rawRule.getExtraPrice()));
+            normalizedRule.setItems(categoryDishes.stream()
+                    .map(dish -> {
+                        ComboConfig.Item item = new ComboConfig.Item();
+                        item.setDishId(dish.getId());
+                        item.setExtraPrice(extraPriceByDishId.getOrDefault(dish.getId(), BigDecimal.ZERO));
+                        return item;
+                    })
+                    .collect(Collectors.toList()));
+            normalizedRules.add(normalizedRule);
         }
 
-        normalized.setRules(rules);
+        normalized.setRules(normalizedRules);
         return normalized;
     }
 
@@ -136,7 +167,8 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
         if (dish == null) {
             return null;
         }
-        return enrichDishes(Collections.singletonList(dish)).get(0);
+        List<Dish> dishes = enrichDishes(Collections.singletonList(dish));
+        return dishes.isEmpty() ? null : dishes.get(0);
     }
 
     @Override
@@ -204,16 +236,31 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
         }
 
         for (ComboConfig.Rule rule : safeRules(comboConfig)) {
+            Map<Long, BigDecimal> extraPriceByDishId = safeItems(rule).stream()
+                    .filter(item -> item != null && item.getDishId() != null)
+                    .collect(Collectors.toMap(
+                            ComboConfig.Item::getDishId,
+                            item -> normalizeExtraPrice(item.getExtraPrice()),
+                            (left, right) -> left,
+                            LinkedHashMap::new
+                    ));
+
             List<Dish> categoryDishes = dishesByCategory.getOrDefault(rule.getCategoryId(), Collections.<Dish>emptyList());
             List<ComboConfig.Item> items = categoryDishes.stream()
                     .filter(item -> merchantId.equals(item.getMerchantId()))
                     .filter(item -> TYPE_SINGLE.equals(normalizeDishType(item.getType())))
+                    .sorted((left, right) -> {
+                        Long leftId = left.getId() == null ? Long.MAX_VALUE : left.getId();
+                        Long rightId = right.getId() == null ? Long.MAX_VALUE : right.getId();
+                        return leftId.compareTo(rightId);
+                    })
                     .map(item -> {
                         ComboConfig.Item comboItem = new ComboConfig.Item();
                         comboItem.setDishId(item.getId());
                         comboItem.setDishName(item.getName());
                         comboItem.setDishImage(item.getImage());
                         comboItem.setDishPrice(item.getPrice());
+                        comboItem.setExtraPrice(extraPriceByDishId.getOrDefault(item.getId(), BigDecimal.ZERO));
                         comboItem.setDishStock(item.getStock() == null ? 0 : item.getStock());
                         comboItem.setDishStatus(item.getStatus());
                         comboItem.setDishType(normalizeDishType(item.getType()));
@@ -226,6 +273,7 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
                 Category category = categoryService.getById(rule.getCategoryId());
                 rule.setCategoryName(category == null ? "" : category.getName());
             }
+            rule.setExtraPrice(normalizeExtraPrice(rule.getExtraPrice()));
         }
     }
 
@@ -282,6 +330,13 @@ public class DishServiceImpl extends ServiceImpl<DishMapper, Dish> implements Di
         return rule == null || rule.getItems() == null
                 ? Collections.<ComboConfig.Item>emptyList()
                 : rule.getItems();
+    }
+
+    private BigDecimal normalizeExtraPrice(BigDecimal extraPrice) {
+        if (extraPrice == null || extraPrice.compareTo(BigDecimal.ZERO) < 0) {
+            return BigDecimal.ZERO;
+        }
+        return extraPrice;
     }
 
     private String normalizeDishType(String rawType) {

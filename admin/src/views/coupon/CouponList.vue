@@ -124,6 +124,13 @@ const defaultForm = {
 }
 const form = reactive({ ...defaultForm })
 
+function resetFormState() {
+  Object.assign(form, defaultForm)
+  if ('id' in form) {
+    delete form.id
+  }
+}
+
 async function fetchData() {
   loading.value = true
   try {
@@ -138,10 +145,11 @@ async function fetchData() {
 function openDialog(row) {
   if (row) {
     editingId.value = row.id
-    Object.assign(form, { ...defaultForm, ...row })
+    resetFormState()
+    Object.assign(form, { ...row })
   } else {
     editingId.value = null
-    Object.assign(form, defaultForm)
+    resetFormState()
   }
   dialogVisible.value = true
 }
@@ -151,6 +159,7 @@ async function handleSubmit() {
   if (editingId.value) {
     await updateCoupon(editingId.value, payload)
   } else {
+    delete payload.id
     await createCoupon(payload)
   }
   ElMessage.success('保存成功')

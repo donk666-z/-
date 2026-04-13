@@ -2,7 +2,7 @@
   <view class="page">
     <view class="header-card">
       <text class="merchant-name">{{ merchant.name || '商家详情' }}</text>
-      <text class="merchant-meta">评分 {{ reviewScore }} · 月售 {{ merchant.monthSales || 0 }} · 配送费 3元</text>
+      <text class="merchant-meta">评分 {{ reviewScore }} · 月售 {{ merchant.monthSales || 0 }} · 配送费 {{ formatPrice(deliveryFee) }}元</text>
       <text class="merchant-desc">{{ merchant.description || '欢迎选购本店商品' }}</text>
     </view>
 
@@ -132,6 +132,7 @@
 import { mapState } from 'vuex'
 import { getMerchantDetail, getDishList } from '@/api/merchant'
 import { getMerchantReviews } from '@/api/review'
+import { getDeliveryFee } from '@/api/config'
 import StudentTabBarOverlay from '@/components/StudentTabBarOverlay.vue'
 
 const normalizeType = (type) => (type === 'combo' ? 'combo' : 'single')
@@ -194,6 +195,7 @@ export default {
       merchant: {},
       categories: [],
       reviews: [],
+      deliveryFee: 3,
       showCart: false,
       showComboPopup: false,
       activeComboDish: null,
@@ -308,7 +310,7 @@ export default {
         .join('；')
     },
     async loadData() {
-      await Promise.all([this.loadMerchantDetail(), this.loadDishList(), this.loadReviews()])
+      await Promise.all([this.loadMerchantDetail(), this.loadDishList(), this.loadReviews(), this.loadDeliveryFee()])
     },
     async loadMerchantDetail() {
       try {
@@ -341,6 +343,16 @@ export default {
       } catch (error) {
         console.error('加载评价失败', error)
         this.reviews = []
+      }
+    },
+    async loadDeliveryFee() {
+      try {
+        const value = await getDeliveryFee()
+        const fee = Number(value)
+        this.deliveryFee = Number.isFinite(fee) ? fee : 3
+      } catch (error) {
+        console.error('加载配送费失败', error)
+        this.deliveryFee = 3
       }
     },
     onTabChange(item) {

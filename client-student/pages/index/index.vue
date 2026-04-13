@@ -31,7 +31,7 @@
           <view class="merchant-tags">
             <text class="tag">月售{{ item.monthSales || 0 }}</text>
             <text class="tag">评分{{ item.rating || '-' }}</text>
-            <text class="tag">配送费¥3</text>
+            <text class="tag">配送费¥{{ formatFee(deliveryFee) }}</text>
           </view>
         </view>
         <view class="merchant-status" :class="item.status === 'open' ? 'open' : 'closed'">
@@ -46,6 +46,7 @@
 
 <script>
 import { getMerchantList } from '@/api/merchant'
+import { getDeliveryFee } from '@/api/config'
 import StudentTabBarOverlay from '@/components/StudentTabBarOverlay.vue'
 
 export default {
@@ -54,18 +55,22 @@ export default {
     return {
       keyword: '',
       merchantList: [],
-      loading: false
+      loading: false,
+      deliveryFee: 3
     }
   },
   onLoad() {
-    this.loadMerchantList()
+    this.loadPageData()
   },
   onPullDownRefresh() {
-    this.loadMerchantList().then(() => {
+    this.loadPageData().then(() => {
       uni.stopPullDownRefresh()
     })
   },
   methods: {
+    async loadPageData() {
+      await Promise.all([this.loadMerchantList(), this.loadDeliveryFee()])
+    },
     async loadMerchantList() {
       this.loading = true
       try {
@@ -75,6 +80,20 @@ export default {
       } finally {
         this.loading = false
       }
+    },
+    async loadDeliveryFee() {
+      try {
+        const value = await getDeliveryFee()
+        const fee = Number(value)
+        this.deliveryFee = Number.isFinite(fee) ? fee : 3
+      } catch (error) {
+        console.error(error)
+        this.deliveryFee = 3
+      }
+    },
+    formatFee(value) {
+      const fee = Number(value || 0)
+      return Number.isInteger(fee) ? String(fee) : fee.toFixed(2)
     },
     onSearch() {
       this.loadMerchantList()
