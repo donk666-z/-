@@ -18,4 +18,10 @@ public class AdminStatsController {
         Map<String, Object> stats = orderService.getPlatformStats();
         return Result.success(stats);
     }
+
+    @GetMapping("/trend")
+    public Result<Map<String, Object>> getTrend(@RequestParam(defaultValue = "7") Integer days) {
+        Map<String, Object> trend = orderService.getPlatformTrend(days);
+        return Result.success(trend);
+    }
 }

@@ -790,6 +790,21 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         return stats;
     }
 
+    @Override
+    public Map<String, Object> getPlatformTrend(Integer days) {
+        int normalizedDays = normalizeTrendDays(days);
+        LocalDate endDate = LocalDate.now();
+        LocalDate startDate = endDate.minusDays(normalizedDays - 1L);
+
+        Map<String, Object> trend = new HashMap<>();
+        trend.put("days", normalizedDays);
+        trend.put("labels", buildDateLabels(startDate, endDate));
+        trend.put("orderTrend", buildOrderTrend(startDate, endDate));
+        trend.put("incomeTrend", buildIncomeTrend(startDate, endDate));
+        trend.put("growthTrend", buildGrowthTrend(startDate, endDate));
+        return trend;
+    }
+
     private void createMerchantIncomeTransaction(Order order, LocalDateTime completedTime) {
         if (order.getMerchantId() == null
                 || order.getDishPrice() == null
@@ -879,6 +894,125 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
                     return item;
                 })
                 .collect(Collectors.toList());
+    }
+
+    private int normalizeTrendDays(Integer days) {
+        if (days == null) {
+            return 7;
+        }
+        if (days <= 7) {
+            return 7;
+        }
+        if (days <= 15) {
+            return 15;
+        }
+        return 30;
+    }
+
+    private List<String> buildDateLabels(LocalDate startDate, LocalDate endDate) {
+        List<String> labels = new ArrayList<>();
+        LocalDate current = startDate;
+        while (!current.isAfter(endDate)) {
+            labels.add(current.format(WEEK_TREND_LABEL_FORMATTER));
+            current = current.plusDays(1);
+        }
+        return labels;
+    }
+
+    private List<Map<String, Object>> buildOrderTrend(LocalDate startDate, LocalDate endDate) {
+        Map<LocalDate, Long> countByDay = list(new LambdaQueryWrapper<Order>()
+                .ge(Order::getCreatedAt, startDate.atStartOfDay())
+                .lt(Order::getCreatedAt, endDate.plusDays(1L).atStartOfDay()))
+                .stream()
+                .filter(order -> order.getCreatedAt() != null)
+                .collect(Collectors.groupingBy(order -> order.getCreatedAt().toLocalDate(),
+                        LinkedHashMap::new,
+                        Collectors.counting()));
+        return buildDailyCountSeries(startDate, endDate, countByDay);
+    }
+
+    private List<Map<String, Object>> buildIncomeTrend(LocalDate startDate, LocalDate endDate) {
+        Map<LocalDate, BigDecimal> amountByDay = transactionMapper.selectList(new LambdaQueryWrapper<Transaction>()
+                        .eq(Transaction::getStatus, "completed")
+                        .ge(Transaction::getCreatedAt, startDate.atStartOfDay())
+                        .lt(Transaction::getCreatedAt, endDate.plusDays(1L).atStartOfDay()))
+                .stream()
+                .filter(transaction -> transaction.getCreatedAt() != null)
+                .collect(Collectors.groupingBy(transaction -> transaction.getCreatedAt().toLocalDate(),
+                        LinkedHashMap::new,
+                        Collectors.mapping(Transaction::getAmount,
+                                Collectors.reducing(BigDecimal.ZERO,
+                                        amount -> amount == null ? BigDecimal.ZERO : amount,
+                                        BigDecimal::add))));
+        return buildDailyAmountSeries(startDate, endDate, amountByDay);
+    }
+
+    private Map<String, List<Map<String, Object>>> buildGrowthTrend(LocalDate startDate, LocalDate endDate) {
+        Map<LocalDate, Long> userCountByDay = userService.list(new LambdaQueryWrapper<User>()
+                        .eq(User::getRole, "student")
+                        .ge(User::getCreatedAt, startDate.atStartOfDay())
+                        .lt(User::getCreatedAt, endDate.plusDays(1L).atStartOfDay()))
+                .stream()
+                .filter(user -> user.getCreatedAt() != null)
+                .collect(Collectors.groupingBy(user -> user.getCreatedAt().toLocalDate(),
+                        LinkedHashMap::new,
+                        Collectors.counting()));
+
+        Map<LocalDate, Long> merchantCountByDay = merchantService.list(new LambdaQueryWrapper<Merchant>()
+                        .ge(Merchant::getCreatedAt, startDate.atStartOfDay())
+                        .lt(Merchant::getCreatedAt, endDate.plusDays(1L).atStartOfDay()))
+                .stream()
+                .filter(merchant -> merchant.getCreatedAt() != null)
+                .collect(Collectors.groupingBy(merchant -> merchant.getCreatedAt().toLocalDate(),
+                        LinkedHashMap::new,
+                        Collectors.counting()));
+
+        Map<LocalDate, Long> riderCountByDay = riderMapper.selectList(new LambdaQueryWrapper<Rider>()
+                        .ge(Rider::getCreatedAt, startDate.atStartOfDay())
+                        .lt(Rider::getCreatedAt, endDate.plusDays(1L).atStartOfDay()))
+                .stream()
+                .filter(rider -> rider.getCreatedAt() != null)
+                .collect(Collectors.groupingBy(rider -> rider.getCreatedAt().toLocalDate(),
+                        LinkedHashMap::new,
+                        Collectors.counting()));
+
+        Map<String, List<Map<String, Object>>> growthTrend = new LinkedHashMap<>();
+        growthTrend.put("users", buildDailyCountSeries(startDate, endDate, userCountByDay));
+        growthTrend.put("merchants", buildDailyCountSeries(startDate, endDate, merchantCountByDay));
+        growthTrend.put("riders", buildDailyCountSeries(startDate, endDate, riderCountByDay));
+        return growthTrend;
+    }
+
+    private List<Map<String, Object>> buildDailyCountSeries(LocalDate startDate,
+                                                            LocalDate endDate,
+                                                            Map<LocalDate, Long> countByDay) {
+        List<Map<String, Object>> series = new ArrayList<>();
+        LocalDate current = startDate;
+        while (!current.isAfter(endDate)) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("date", current.toString());
+            item.put("label", current.format(WEEK_TREND_LABEL_FORMATTER));
+            item.put("value", countByDay.getOrDefault(current, 0L));
+            series.add(item);
+            current = current.plusDays(1);
+        }
+        return series;
+    }
+
+    private List<Map<String, Object>> buildDailyAmountSeries(LocalDate startDate,
+                                                             LocalDate endDate,
+                                                             Map<LocalDate, BigDecimal> amountByDay) {
+        List<Map<String, Object>> series = new ArrayList<>();
+        LocalDate current = startDate;
+        while (!current.isAfter(endDate)) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("date", current.toString());
+            item.put("label", current.format(WEEK_TREND_LABEL_FORMATTER));
+            item.put("value", amountByDay.getOrDefault(current, BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP));
+            series.add(item);
+            current = current.plusDays(1);
+        }
+        return series;
     }
 
     private List<Map<String, Object>> buildHotDishes(List<Order> completedOrders) {

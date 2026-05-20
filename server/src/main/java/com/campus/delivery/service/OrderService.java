@@ -43,4 +43,6 @@ public interface OrderService extends IService<Order> {
     Map<String, Object> getMerchantStats(Long merchantId);
 
     Map<String, Object> getPlatformStats();
+
+    Map<String, Object> getPlatformTrend(Integer days);
 }
